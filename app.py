@@ -29,30 +29,25 @@ def get_db_connection():
     """Erstellt eine persistente Datenbankverbindung."""
     # Lese Datenbank-Konfiguration aus Streamlit Secrets oder Umgebungsvariablen
     try:
-        db_config = st.secrets.get("database", {})
+        db_config = st.secrets["database"]
         return psycopg2.connect(
-            host=db_config.get("host", os.environ.get("DB_HOST", "")),
-            port=db_config.get("port", int(os.environ.get("DB_PORT", "5432"))),
-            database=db_config.get("database", os.environ.get("DB_NAME", "postgres")),
-            user=db_config.get("user", os.environ.get("DB_USER", "postgres")),
-            password=db_config.get("password", os.environ.get("DB_PASSWORD", "")),
+            host=db_config["host"],
+            port=db_config["port"],
+            database=db_config["database"],
+            user=db_config["user"],
+            password=db_config["password"],
             sslmode='require'
         )
-    except Exception:
-        # Fallback für lokale Entwicklung mit Umgebungsvariablen
-        return psycopg2.connect(
-            host=os.environ.get("DB_HOST", ""),
-            port=int(os.environ.get("DB_PORT", "5432")),
-            database=os.environ.get("DB_NAME", "postgres"),
-            user=os.environ.get("DB_USER", "postgres"),
-            password=os.environ.get("DB_PASSWORD", ""),
-            sslmode='require'
-        )
+    except Exception as e:
+        st.warning(f"Datenbankverbindung fehlgeschlagen: {e}")
+        return None
 
 def db_query(query, params=None, fetch=True):
     """Führt eine Datenbankabfrage aus mit automatischer Reconnection."""
     try:
         conn = get_db_connection()
+        if conn is None:
+            return None
         # Prüfe ob Verbindung noch aktiv ist
         if conn.closed:
             st.cache_resource.clear()
