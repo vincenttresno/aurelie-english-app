@@ -1162,6 +1162,13 @@ else:
     quote = int(correct / total * 100) if total > 0 else 0
     best_streak = st.session_state.get("best_streak", 0)
 
+    # Auto-save: Session automatisch speichern wenn noch nicht gespeichert
+    if not st.session_state.get("session_saved", False):
+        save_session_result(results)
+        update_error_patterns(results)
+        update_spaced_repetition(results)
+        st.session_state.session_saved = True
+
     # Motivierende Überschrift basierend auf Ergebnis
     if quote >= 90:
         st.title("🏆 Fantastisch, Aurelie!")
@@ -1255,13 +1262,35 @@ else:
 
     st.markdown("---")
 
-    # Was kommt als nächstes - konkrete Verben
+    # Was kommt als nächstes - grammatikalische Prinzipien + Verben
     st.markdown("### 🔮 Morgen")
     if wrong_examples:
-        # Zeige die konkreten Verben die wiederholt werden
-        wrong_verbs = list(set(ex["verb"] for ex in wrong_examples if ex["verb"]))
-        if wrong_verbs:
-            st.info(f"💡 Wir üben morgen besonders: **{', '.join(wrong_verbs)}**")
+        # Sammle Fehler-Prinzipien aus den falschen Antworten
+        principles = []
+        wrong_verbs = []
+        for ex in wrong_examples:
+            verb = ex.get("verb", "")
+            user_ans = ex.get("user", "").lower()
+            correct_ans = ex.get("correct", "").lower()
+            if verb:
+                wrong_verbs.append(verb)
+            # Erkennung: welches grammatikalische Prinzip wurde verletzt?
+            if user_ans == verb.lower() and correct_ans != verb.lower():
+                principles.append(f"**{verb}**: Du hast die Grundform benutzt statt der Vergangenheitsform → _{correct_ans}_")
+            elif user_ans.endswith("ed") and not correct_ans.endswith("ed"):
+                principles.append(f"**{verb}**: Unregelmäßiges Verb! Nicht _-ed_ anhängen → _{correct_ans}_")
+            elif correct_ans.startswith("has ") or correct_ans.startswith("have "):
+                principles.append(f"**{verb}**: Present Perfect braucht _have/has_ + 3. Form → _{correct_ans}_")
+            elif correct_ans != user_ans and verb:
+                principles.append(f"**{verb}**: Die richtige Vergangenheitsform ist → _{correct_ans}_")
+
+        if principles:
+            st.markdown("**📚 Das üben wir morgen:**")
+            for p in principles:
+                st.markdown(f"- {p}")
+            st.caption("Diese werden automatisch in dein Spaced Repetition System aufgenommen.")
+        elif wrong_verbs:
+            st.info(f"💡 Wir üben morgen besonders: **{', '.join(set(wrong_verbs))}**")
             st.caption("Diese werden automatisch in dein Spaced Repetition System aufgenommen.")
         else:
             st.info("💡 Wir wiederholen morgen die Fehler von heute.")
@@ -1270,27 +1299,19 @@ else:
 
     st.markdown("---")
 
-    # Buttons
-    col1, col2 = st.columns(2)
+    # Auto-save Bestätigung
+    st.success("✅ Session automatisch gespeichert + Lernfortschritt aktualisiert!")
 
-    with col1:
-        if st.button("💾 Session speichern", type="secondary", use_container_width=True):
-            filename = save_session_result(results)
-            # Lern-System Updates: Error Patterns + Spaced Repetition
-            update_error_patterns(results)
-            update_spaced_repetition(results)
-            st.success(f"✅ Session gespeichert + Lernfortschritt aktualisiert!")
-
-    with col2:
-        if st.button("🔄 Neue Session starten", type="primary", use_container_width=True):
-            st.session_state.exercise_num = 0
-            st.session_state.current_exercise = None
-            st.session_state.results = []
-            st.session_state.streak = 0
-            st.session_state.best_streak = 0
-            st.session_state.show_feedback = False
-            st.session_state.session_started = False
-            st.rerun()
+    if st.button("🔄 Neue Session starten", type="primary", use_container_width=True):
+        st.session_state.exercise_num = 0
+        st.session_state.current_exercise = None
+        st.session_state.results = []
+        st.session_state.streak = 0
+        st.session_state.best_streak = 0
+        st.session_state.show_feedback = False
+        st.session_state.session_started = False
+        st.session_state.session_saved = False
+        st.rerun()
 
     st.markdown("---")
     st.markdown("**Bis morgen, Aurelie! 👋💪**")
