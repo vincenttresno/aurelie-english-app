@@ -14,12 +14,70 @@ import random
 from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 # Lade .env Datei (für API Key)
 load_dotenv()
 
-# Basis-Pfad zum Aurelie-System
+# Basis-Pfad zum Aurelie-System (für lokale Dateien die noch nicht migriert sind)
 BASE_PATH = Path(__file__).parent.parent.parent / "areas" / "aurelie-english"
+
+# --- Supabase Database Connection ---
+@st.cache_resource
+def get_db_connection():
+    """Erstellt eine persistente Datenbankverbindung."""
+    # Lese Datenbank-Konfiguration aus Streamlit Secrets oder Umgebungsvariablen
+    try:
+        db_config = st.secrets.get("database", {})
+        return psycopg2.connect(
+            host=db_config.get("host", os.environ.get("DB_HOST", "")),
+            port=db_config.get("port", int(os.environ.get("DB_PORT", "5432"))),
+            database=db_config.get("database", os.environ.get("DB_NAME", "postgres")),
+            user=db_config.get("user", os.environ.get("DB_USER", "postgres")),
+            password=db_config.get("password", os.environ.get("DB_PASSWORD", "")),
+            sslmode='require'
+        )
+    except Exception:
+        # Fallback für lokale Entwicklung mit Umgebungsvariablen
+        return psycopg2.connect(
+            host=os.environ.get("DB_HOST", ""),
+            port=int(os.environ.get("DB_PORT", "5432")),
+            database=os.environ.get("DB_NAME", "postgres"),
+            user=os.environ.get("DB_USER", "postgres"),
+            password=os.environ.get("DB_PASSWORD", ""),
+            sslmode='require'
+        )
+
+def db_query(query, params=None, fetch=True):
+    """Führt eine Datenbankabfrage aus mit automatischer Reconnection."""
+    try:
+        conn = get_db_connection()
+        # Prüfe ob Verbindung noch aktiv ist
+        if conn.closed:
+            st.cache_resource.clear()
+            conn = get_db_connection()
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(query, params)
+            if fetch:
+                result = cur.fetchall()
+                conn.commit()  # Auch bei SELECT committen um Transaction zu schließen
+                return result
+            conn.commit()
+            return None
+    except psycopg2.OperationalError as e:
+        # Verbindung verloren - Cache leeren und neu verbinden
+        st.cache_resource.clear()
+        st.error(f"Datenbankverbindung verloren, bitte Seite neu laden: {e}")
+        return None
+    except Exception as e:
+        try:
+            conn.rollback()
+        except:
+            pass
+        st.error(f"Datenbankfehler: {e}")
+        return None
 
 # --- Page Config ---
 st.set_page_config(
@@ -467,50 +525,27 @@ def save_extracted_vocabulary(extraction_text):
 
 
 def save_session_result(results):
-    """Speichert die Session-Ergebnisse."""
-    try:
-        sessions_path = BASE_PATH / "sessions"
-        sessions_path.mkdir(exist_ok=True)
-    except Exception as e:
-        print(f"Fehler beim Erstellen des Sessions-Ordners: {e}")
-        return None
-
-    timestamp = datetime.now().strftime("%Y-%m-%d-%H%M")
-    filename = f"{timestamp}-practice.md"
-
+    """Speichert die Session-Ergebnisse in Supabase."""
     correct = sum(1 for r in results if r.get("correct", False))
     total = len(results)
-    quote = int(correct / total * 100) if total > 0 else 0
+    best_streak = st.session_state.get("best_streak", 0)
 
-    content = f"""# Session {datetime.now().strftime("%Y-%m-%d %H:%M")}
+    # Details als JSON speichern
+    details = {
+        "exercises": results,
+        "timestamp": datetime.now().isoformat()
+    }
 
-## Ergebnisse
+    query = """
+        INSERT INTO session_results (session_date, total_exercises, correct, best_streak, details)
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING id
+    """
+    result = db_query(query, (datetime.now().date(), total, correct, best_streak, json.dumps(details)), fetch=True)
 
-| Metrik | Wert |
-|--------|------|
-| Übungen | {total} |
-| Richtig | {correct} |
-| Quote | {quote}% |
-
-## Details
-
-"""
-
-    for i, r in enumerate(results, 1):
-        status = "✅" if r["correct"] else "❌"
-        content += f"""### Übung {i}: {r["topic"]}
-{status} **Frage**: {r["question"]}
-- Deine Antwort: {r["user_answer"]}
-- Richtige Antwort: {r["correct_answer"]}
-
-"""
-
-    try:
-        (sessions_path / filename).write_text(content)
-    except Exception as e:
-        print(f"Fehler beim Speichern der Session: {e}")
-        return None
-    return filename
+    if result:
+        return f"session-{result[0]['id']}"
+    return None
 
 def detect_error_pattern(user_answer, correct_answer, verb):
     """Erkennt das Fehlermuster basierend auf der falschen Antwort."""
@@ -649,14 +684,11 @@ Schau auf die Zeitangaben in der Frage - sie zeigen dir welche Zeit gebraucht wi
 
 
 def update_error_patterns(results):
-    """Aktualisiert die error-patterns.md basierend auf Session-Ergebnissen."""
-    path = BASE_PATH / "progress" / "error-patterns.md"
-
+    """Aktualisiert die error_patterns Tabelle in Supabase."""
     # Falsche Antworten sammeln
     errors = []
     for r in results:
         if not r.get("correct", False):
-            # Verb aus der Frage extrahieren (steht in Klammern)
             question = r.get("question", "")
             verb_match = re.search(r'\((\w+)\)', question)
             verb = verb_match.group(1) if verb_match else "unknown"
@@ -669,108 +701,39 @@ def update_error_patterns(results):
             errors.append(pattern)
 
     if not errors:
-        return  # Keine Fehler zu speichern
-
-    # Bestehende Datei laden (mit Error Handling)
-    try:
-        current_content = path.read_text() if path.exists() else ""
-    except Exception as e:
-        print(f"Fehler beim Lesen von error-patterns.md: {e}")
         return
 
-    # Für jeden Fehler die Datei aktualisieren
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now().date()
 
     for error in errors:
-        pattern_name = error["pattern"]
-
         # Prüfen ob Pattern schon existiert
-        if f"### Pattern: {pattern_name}" in current_content:
+        existing = db_query(
+            "SELECT id, occurrences FROM error_patterns WHERE pattern = %s AND verb = %s",
+            (error["pattern"], error["verb"])
+        )
+
+        if existing:
             # Vorkommen erhöhen
-            match = re.search(rf"(### Pattern: {pattern_name}.*?Vorkommen:\s*)(\d+)", current_content, re.DOTALL)
-            if match:
-                old_count = int(match.group(2))
-                new_count = old_count + 1
-
-                # Status aktualisieren wenn ≥3
-                new_status = "AKTIV" if new_count >= 3 else "BEOBACHTEN"
-
-                # Verb zur Problem-Verben-Liste hinzufügen (falls noch nicht vorhanden)
-                verb_match = re.search(rf"(### Pattern: {pattern_name}.*?Problem-Verben\*\*:\s*)([^\n]+)", current_content, re.DOTALL)
-                if verb_match:
-                    existing_verbs = verb_match.group(2).strip()
-                    new_verb = error["verb"]
-                    if new_verb not in existing_verbs:
-                        updated_verbs = f"{existing_verbs}, {new_verb}"
-                        current_content = re.sub(
-                            rf"(### Pattern: {pattern_name}.*?Problem-Verben\*\*:\s*)[^\n]+",
-                            rf"\g<1>{updated_verbs}",
-                            current_content,
-                            flags=re.DOTALL
-                        )
-
-                # Vorkommen und Status ersetzen
-                current_content = re.sub(
-                    rf"(### Pattern: {pattern_name}.*?Vorkommen:\s*)\d+(.*?Status:\s*)(\w+)",
-                    rf"\g<1>{new_count}\g<2>{new_status}",
-                    current_content,
-                    flags=re.DOTALL
-                )
+            new_count = existing[0]['occurrences'] + 1
+            new_status = "AKTIV" if new_count >= 3 else "BEOBACHTEN"
+            db_query(
+                "UPDATE error_patterns SET occurrences = %s, status = %s, last_seen = %s WHERE id = %s",
+                (new_count, new_status, today, existing[0]['id']),
+                fetch=False
+            )
         else:
-            # Neues Pattern hinzufügen unter "## Beobachtete Muster"
-            new_pattern = f"""
-### Pattern: {pattern_name}
-- **Beschreibung**: {error["description"]}
-- **Beispiel**: {error["example"]}
-- **Problem-Verben**: {error["verb"]}
-- **Vorkommen**: 1x ({today})
-- **Status**: BEOBACHTEN
-"""
-            # Nach "## Beobachtete Muster" einfügen
-            if "## Beobachtete Muster" in current_content:
-                current_content = current_content.replace(
-                    "## Beobachtete Muster\n",
-                    f"## Beobachtete Muster\n{new_pattern}"
-                )
-
-    # Statistiken aktualisieren
-    aktiv_count = current_content.count("Status**: AKTIV")
-    beobachten_count = current_content.count("Status**: BEOBACHTEN")
-
-    current_content = re.sub(
-        r"\| Aktive Muster \| \d+ \|",
-        f"| Aktive Muster | {aktiv_count} |",
-        current_content
-    )
-    current_content = re.sub(
-        r"\| Beobachtete Muster \| \d+ \|",
-        f"| Beobachtete Muster | {beobachten_count} |",
-        current_content
-    )
-    current_content = re.sub(
-        r"\*\*Zuletzt aktualisiert\*\*:.*",
-        f"**Zuletzt aktualisiert**: {today}",
-        current_content
-    )
-
-    try:
-        path.write_text(current_content)
-    except Exception as e:
-        print(f"Fehler beim Schreiben von error-patterns.md: {e}")
+            # Neues Pattern einfügen
+            db_query(
+                """INSERT INTO error_patterns (pattern, description, example, verb, occurrences, status, last_seen)
+                   VALUES (%s, %s, %s, %s, 1, 'BEOBACHTEN', %s)""",
+                (error["pattern"], error["description"], error["example"], error["verb"], today),
+                fetch=False
+            )
 
 def update_spaced_repetition(results):
-    """Aktualisiert die spaced-repetition.md basierend auf Session-Ergebnissen."""
-    path = BASE_PATH / "progress" / "spaced-repetition.md"
-
-    if not path.exists():
-        return
-
-    try:
-        content = path.read_text()
-    except Exception as e:
-        print(f"Fehler beim Lesen von spaced-repetition.md: {e}")
-        return
-    today = datetime.now().strftime("%Y-%m-%d")
+    """Aktualisiert die spaced_repetition Tabelle in Supabase."""
+    # SM-2 Intervalle: 1 → 3 → 7 → 14 → 30 → 60 Tage
+    intervals = [1, 3, 7, 14, 30, 60]
 
     # Sammle Verben die geübt wurden
     practiced_verbs = {}
@@ -785,143 +748,73 @@ def update_spaced_repetition(results):
             else:
                 practiced_verbs[verb]["wrong"] += 1
 
-    # Für jedes Verb: Items aktualisieren oder hinzufügen
-    # SM-2 Intervalle: 1 → 3 → 7 → 14 → 30 → 60 Tage
-    intervals = [1, 3, 7, 14, 30, 60]
-
     for verb, stats in practiced_verbs.items():
-        # Hole aktuelles Intervall aus der Datei (wenn vorhanden)
-        current_interval = 1  # Default für neue Items
-        # Escape verb für sichere Regex-Verwendung
-        verb_escaped = re.escape(verb)
-        interval_match = re.search(rf"\| {verb_escaped} \|[^|]+\|\s*(\d+)\s*days?\s*\|", content)
-        if interval_match:
-            current_interval = int(interval_match.group(1))
+        # Prüfen ob Verb schon existiert
+        existing = db_query(
+            "SELECT id, interval_days FROM spaced_repetition WHERE item = %s",
+            (verb,)
+        )
 
-        # Bestimme nächstes Intervall basierend auf Erfolg
-        if stats["correct"] > stats["wrong"]:
-            # Erfolgreich: Zum nächsten Intervall aufsteigen
-            try:
-                current_index = intervals.index(current_interval)
-                next_interval = intervals[min(current_index + 1, len(intervals) - 1)]
-            except ValueError:
-                # Aktuelles Intervall nicht in Liste, finde nächstgrößeres
-                next_interval = next((i for i in intervals if i > current_interval), 60)
+        if existing:
+            current_interval = existing[0]['interval_days']
 
-            # Bei 60 Tagen: Status wird "mastered"
-            status = "mastered" if next_interval >= 60 else "active"
-        else:
-            # Fehler: Zurück auf 1 Tag
-            next_interval = 1
-            status = "active"
+            # Bestimme nächstes Intervall
+            if stats["correct"] > stats["wrong"]:
+                try:
+                    current_index = intervals.index(current_interval)
+                    next_interval = intervals[min(current_index + 1, len(intervals) - 1)]
+                except ValueError:
+                    next_interval = next((i for i in intervals if i > current_interval), 60)
+                status = "mastered" if next_interval >= 60 else "active"
+            else:
+                next_interval = 1
+                status = "active"
 
-        # Berechne nächstes Datum
-        next_date = (datetime.now() + timedelta(days=next_interval)).strftime("%Y-%m-%d")
+            next_date = datetime.now().date() + timedelta(days=next_interval)
 
-        # Prüfen ob Verb schon in der Tabelle ist
-        if f"| {verb} |" in content:
-            # Update die Zeile (mit escaped verb für sichere Regex)
-            content = re.sub(
-                rf"\| {verb_escaped} \|.*?\|.*?\|.*?\|.*?\|",
-                f"| {verb} | Irregular Verbs | {next_interval} days | {next_date} | {status} |",
-                content
+            db_query(
+                "UPDATE spaced_repetition SET interval_days = %s, next_review = %s, status = %s WHERE id = %s",
+                (next_interval, next_date, status, existing[0]['id']),
+                fetch=False
             )
         else:
-            # Füge neues Item hinzu (ersetze die leere Zeile)
-            if "| - | - | - | - | - |" in content:
-                content = content.replace(
-                    "| - | - | - | - | - |",
-                    f"| {verb} | Irregular Verbs | {next_interval} days | {next_date} | {status} |\n| - | - | - | - | - |"
-                )
-
-    # Statistiken aktualisieren
-    item_count = content.count("| active |") + content.count("| mastered |")
-    content = re.sub(
-        r"\| Items gesamt \| \d+ \|",
-        f"| Items gesamt | {item_count} |",
-        content
-    )
-    content = re.sub(
-        r"\*\*Zuletzt aktualisiert\*\*:.*",
-        f"**Zuletzt aktualisiert**: {today}",
-        content
-    )
-
-    try:
-        path.write_text(content)
-    except Exception as e:
-        print(f"Fehler beim Schreiben von spaced-repetition.md: {e}")
+            # Neues Item einfügen
+            next_date = datetime.now().date() + timedelta(days=1)
+            db_query(
+                """INSERT INTO spaced_repetition (item, topic, interval_days, next_review, status)
+                   VALUES (%s, 'Irregular Verbs', 1, %s, 'active')""",
+                (verb, next_date),
+                fetch=False
+            )
 
 def get_active_error_patterns():
-    """Holt aktive Fehlermuster für gezielte Übungen.
+    """Holt aktive Fehlermuster aus Supabase für gezielte Übungen.
 
     Returns:
         dict: {"pattern_names": [...], "problem_verbs": [...]}
     """
-    path = BASE_PATH / "progress" / "error-patterns.md"
-    if not path.exists():
+    result = db_query("SELECT pattern, verb FROM error_patterns WHERE status = 'AKTIV'")
+
+    if not result:
         return {"pattern_names": [], "problem_verbs": []}
 
-    try:
-        content = path.read_text()
-    except Exception as e:
-        print(f"Fehler beim Lesen von error-patterns.md: {e}")
-        return {"pattern_names": [], "problem_verbs": []}
-
-    # Finde alle AKTIV patterns mit ihren Problem-Verben
-    pattern_names = []
-    problem_verbs = []
-
-    # Suche nach aktiven Patterns
-    pattern_blocks = re.findall(
-        r"### Pattern: (\S+).*?Problem-Verben\*\*:\s*([^\n]+).*?Status\*\*:\s*AKTIV",
-        content,
-        re.DOTALL
-    )
-
-    for pattern_name, verbs_str in pattern_blocks:
-        pattern_names.append(pattern_name)
-        # Parse die Verben-Liste (komma-separiert)
-        verbs = [v.strip() for v in verbs_str.split(",")]
-        problem_verbs.extend(verbs)
-
-    # Fallback für alte Patterns ohne Problem-Verben Feld
-    old_patterns = re.findall(r"### Pattern: (\S+).*?Status\*\*: AKTIV", content, re.DOTALL)
-    for p in old_patterns:
-        if p not in pattern_names:
-            pattern_names.append(p)
-
-    # Dedupliziere Verben
-    problem_verbs = list(set(problem_verbs))
+    pattern_names = list(set(r['pattern'] for r in result))
+    problem_verbs = list(set(r['verb'] for r in result if r['verb']))
 
     return {"pattern_names": pattern_names, "problem_verbs": problem_verbs}
 
 def get_due_items():
-    """Holt heute fällige Spaced Repetition Items."""
-    path = BASE_PATH / "progress" / "spaced-repetition.md"
-    if not path.exists():
+    """Holt heute fällige Spaced Repetition Items aus Supabase."""
+    today = datetime.now().date()
+    result = db_query(
+        "SELECT item FROM spaced_repetition WHERE status = 'active' AND next_review <= %s",
+        (today,)
+    )
+
+    if not result:
         return []
 
-    try:
-        content = path.read_text()
-    except Exception as e:
-        print(f"Fehler beim Lesen von spaced-repetition.md: {e}")
-        return []
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    # Finde Items die heute oder früher fällig sind
-    due_items = []
-    lines = content.split("\n")
-    for line in lines:
-        if "| active |" in line:
-            parts = line.split("|")
-            if len(parts) >= 5:
-                item = parts[1].strip()
-                due_date = parts[4].strip()
-                if due_date <= today:
-                    due_items.append(item)
-
-    return due_items
+    return [r['item'] for r in result]
 
 # --- Session State ---
 if "exercise_num" not in st.session_state:
