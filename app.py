@@ -507,6 +507,36 @@ def save_extracted_vocabulary(extraction_text):
         return None
 
 
+def ensure_feedback_table():
+    """Erstellt die Feedback-Tabelle falls sie noch nicht existiert."""
+    db_query("""
+        CREATE TABLE IF NOT EXISTS exercise_feedback (
+            id SERIAL PRIMARY KEY,
+            created_at TIMESTAMP DEFAULT NOW(),
+            exercise_topic TEXT,
+            exercise_question TEXT,
+            correct_answer TEXT,
+            feedback_types TEXT[],
+            feedback_text TEXT
+        )
+    """, fetch=False)
+
+
+def save_feedback(exercise, feedback_types, feedback_text):
+    """Speichert Übungs-Feedback in Supabase."""
+    ensure_feedback_table()
+    db_query("""
+        INSERT INTO exercise_feedback (exercise_topic, exercise_question, correct_answer, feedback_types, feedback_text)
+        VALUES (%s, %s, %s, %s, %s)
+    """, (
+        exercise.get('topic', ''),
+        exercise.get('question', ''),
+        exercise.get('correct_answer', ''),
+        feedback_types,
+        feedback_text
+    ), fetch=False)
+
+
 def save_session_result(results):
     """Speichert die Session-Ergebnisse in Supabase."""
     correct = sum(1 for r in results if r.get("correct", False))
@@ -1087,16 +1117,8 @@ elif st.session_state.exercise_num <= st.session_state.total_exercises:
             )
             if st.button("💬 Feedback senden", key=f"send_feedback_{st.session_state.exercise_num}"):
                 if selected_feedback or feedback_text:
-                    # Feedback speichern
-                    feedback_entry = {
-                        "exercise": exercise,
-                        "feedback_types": selected_feedback,
-                        "feedback_text": feedback_text,
-                        "timestamp": datetime.now().isoformat()
-                    }
-                    if "feedback_log" not in st.session_state:
-                        st.session_state.feedback_log = []
-                    st.session_state.feedback_log.append(feedback_entry)
+                    # Feedback in Supabase speichern
+                    save_feedback(exercise, selected_feedback, feedback_text)
                     st.success("✅ Danke für dein Feedback! Das hilft die App zu verbessern.")
                 else:
                     st.warning("Wähle mindestens eine Option oder schreib etwas!")
