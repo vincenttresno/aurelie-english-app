@@ -371,29 +371,17 @@ def _get_fallback_exercise(question, correct_answer, hint, topic):
     }
 
 def check_answer(user_answer, correct_answer):
-    """Prüft die Antwort (flexibel bei Tippfehlern)."""
-    # Edge Case: None oder leere Strings
+    """Prüft die Antwort - exakt, keine Tippfehler-Toleranz bei Grammatikübungen."""
     if not user_answer or not correct_answer:
         return False
 
     user = user_answer.lower().strip()
     correct = correct_answer.lower().strip()
 
-    # Edge Case: Nach strip() leer
     if not user or not correct:
         return False
 
-    # Exakte Übereinstimmung
-    if user == correct:
-        return True
-
-    # Kleine Tippfehler (1 Zeichen Unterschied)
-    if len(user) == len(correct):
-        diff = sum(1 for a, b in zip(user, correct) if a != b)
-        if diff == 1:
-            return True
-
-    return False
+    return user == correct
 
 
 def explain_vocabulary(word):
