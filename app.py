@@ -27,27 +27,32 @@ BASE_PATH = Path(__file__).parent.parent.parent / "areas" / "aurelie-english"
 @st.cache_resource
 def get_db_connection():
     """Erstellt eine persistente Datenbankverbindung."""
-    # Lese Datenbank-Konfiguration aus Streamlit Secrets oder Umgebungsvariablen
+    # Versuche zuerst Streamlit Secrets (für Cloud), dann Fallback auf hardcoded (für lokale Entwicklung)
     try:
-        db_config = st.secrets["database"]
+        db_config = st.secrets.get("database", {})
         return psycopg2.connect(
-            host=db_config["host"],
-            port=db_config["port"],
-            database=db_config["database"],
-            user=db_config["user"],
-            password=db_config["password"],
+            host=db_config.get("host", "db.liwocmdjpjetlcrwuuth.supabase.co"),
+            port=db_config.get("port", 5432),
+            database=db_config.get("database", "postgres"),
+            user=db_config.get("user", "postgres"),
+            password=db_config.get("password", "Gluesing2510!"),
             sslmode='require'
         )
-    except Exception as e:
-        st.warning(f"Datenbankverbindung fehlgeschlagen: {e}")
-        return None
+    except Exception:
+        # Fallback für lokale Entwicklung
+        return psycopg2.connect(
+            host='db.liwocmdjpjetlcrwuuth.supabase.co',
+            port=5432,
+            database='postgres',
+            user='postgres',
+            password='Gluesing2510!',
+            sslmode='require'
+        )
 
 def db_query(query, params=None, fetch=True):
     """Führt eine Datenbankabfrage aus mit automatischer Reconnection."""
     try:
         conn = get_db_connection()
-        if conn is None:
-            return None
         # Prüfe ob Verbindung noch aktiv ist
         if conn.closed:
             st.cache_resource.clear()
@@ -507,36 +512,6 @@ def save_extracted_vocabulary(extraction_text):
         return None
 
 
-def ensure_feedback_table():
-    """Erstellt die Feedback-Tabelle falls sie noch nicht existiert."""
-    db_query("""
-        CREATE TABLE IF NOT EXISTS exercise_feedback (
-            id SERIAL PRIMARY KEY,
-            created_at TIMESTAMP DEFAULT NOW(),
-            exercise_topic TEXT,
-            exercise_question TEXT,
-            correct_answer TEXT,
-            feedback_types TEXT[],
-            feedback_text TEXT
-        )
-    """, fetch=False)
-
-
-def save_feedback(exercise, feedback_types, feedback_text):
-    """Speichert Übungs-Feedback in Supabase."""
-    ensure_feedback_table()
-    db_query("""
-        INSERT INTO exercise_feedback (exercise_topic, exercise_question, correct_answer, feedback_types, feedback_text)
-        VALUES (%s, %s, %s, %s, %s)
-    """, (
-        exercise.get('topic', ''),
-        exercise.get('question', ''),
-        exercise.get('correct_answer', ''),
-        feedback_types,
-        feedback_text
-    ), fetch=False)
-
-
 def save_session_result(results):
     """Speichert die Session-Ergebnisse in Supabase."""
     correct = sum(1 for r in results if r.get("correct", False))
@@ -559,6 +534,29 @@ def save_session_result(results):
     if result:
         return f"session-{result[0]['id']}"
     return None
+
+
+def save_feedback(exercise, user_answer, feedback_text):
+    """Speichert Feedback zu einer Übung in Supabase."""
+    if not feedback_text or not feedback_text.strip():
+        return False
+
+    query = """
+        INSERT INTO feedback (exercise_question, exercise_topic, correct_answer, user_answer, feedback_text)
+        VALUES (%s, %s, %s, %s, %s)
+    """
+    db_query(
+        query,
+        (
+            exercise.get("question", ""),
+            exercise.get("topic", ""),
+            exercise.get("correct_answer", ""),
+            user_answer or "",
+            feedback_text.strip()
+        ),
+        fetch=False
+    )
+    return True
 
 def detect_error_pattern(user_answer, correct_answer, verb):
     """Erkennt das Fehlermuster basierend auf der falschen Antwort."""
@@ -1097,31 +1095,23 @@ elif st.session_state.exercise_num <= st.session_state.total_exercises:
 
         # Feedback-Option für die Übung
         with st.expander("📝 Feedback zu dieser Übung geben"):
-            feedback_options = [
-                "Die Übung war verwirrend",
-                "Die Erklärung hat nicht geholfen",
-                "Das war zu schwer",
-                "Das war zu leicht",
-                "Da war ein Fehler in der Aufgabe",
-                "Anderes Feedback"
-            ]
-            selected_feedback = st.multiselect(
-                "Was war das Problem?",
-                feedback_options,
-                key=f"feedback_{st.session_state.exercise_num}"
-            )
+            # Letzte Antwort für Kontext holen
+            last_user_answer = st.session_state.results[-1]['user_answer'] if st.session_state.results else ""
+
             feedback_text = st.text_area(
-                "Weitere Details (optional):",
+                "Was war das Problem?",
                 key=f"feedback_text_{st.session_state.exercise_num}",
-                placeholder="Beschreibe das Problem..."
+                placeholder="z.B. 'Die Frage war nicht gut erklärt' oder 'Da war ein Fehler'"
             )
             if st.button("💬 Feedback senden", key=f"send_feedback_{st.session_state.exercise_num}"):
-                if selected_feedback or feedback_text:
+                if feedback_text and feedback_text.strip():
                     # Feedback in Supabase speichern
-                    save_feedback(exercise, selected_feedback, feedback_text)
-                    st.success("✅ Danke für dein Feedback! Das hilft die App zu verbessern.")
+                    if save_feedback(exercise, last_user_answer, feedback_text):
+                        st.success("✅ Danke für dein Feedback! Papa kann das jetzt sehen.")
+                    else:
+                        st.error("Feedback konnte nicht gespeichert werden.")
                 else:
-                    st.warning("Wähle mindestens eine Option oder schreib etwas!")
+                    st.warning("Schreib erst was rein!")
 
         if st.button("Weiter →", type="primary", use_container_width=True):
             st.session_state.exercise_num += 1
@@ -1183,13 +1173,6 @@ else:
     total = len(results)
     quote = int(correct / total * 100) if total > 0 else 0
     best_streak = st.session_state.get("best_streak", 0)
-
-    # Auto-save: Session automatisch speichern wenn noch nicht gespeichert
-    if not st.session_state.get("session_saved", False):
-        save_session_result(results)
-        update_error_patterns(results)
-        update_spaced_repetition(results)
-        st.session_state.session_saved = True
 
     # Motivierende Überschrift basierend auf Ergebnis
     if quote >= 90:
@@ -1284,35 +1267,13 @@ else:
 
     st.markdown("---")
 
-    # Was kommt als nächstes - grammatikalische Prinzipien + Verben
+    # Was kommt als nächstes - konkrete Verben
     st.markdown("### 🔮 Morgen")
     if wrong_examples:
-        # Sammle Fehler-Prinzipien aus den falschen Antworten
-        principles = []
-        wrong_verbs = []
-        for ex in wrong_examples:
-            verb = ex.get("verb", "")
-            user_ans = ex.get("user", "").lower()
-            correct_ans = ex.get("correct", "").lower()
-            if verb:
-                wrong_verbs.append(verb)
-            # Erkennung: welches grammatikalische Prinzip wurde verletzt?
-            if user_ans == verb.lower() and correct_ans != verb.lower():
-                principles.append(f"**{verb}**: Du hast die Grundform benutzt statt der Vergangenheitsform → _{correct_ans}_")
-            elif user_ans.endswith("ed") and not correct_ans.endswith("ed"):
-                principles.append(f"**{verb}**: Unregelmäßiges Verb! Nicht _-ed_ anhängen → _{correct_ans}_")
-            elif correct_ans.startswith("has ") or correct_ans.startswith("have "):
-                principles.append(f"**{verb}**: Present Perfect braucht _have/has_ + 3. Form → _{correct_ans}_")
-            elif correct_ans != user_ans and verb:
-                principles.append(f"**{verb}**: Die richtige Vergangenheitsform ist → _{correct_ans}_")
-
-        if principles:
-            st.markdown("**📚 Das üben wir morgen:**")
-            for p in principles:
-                st.markdown(f"- {p}")
-            st.caption("Diese werden automatisch in dein Spaced Repetition System aufgenommen.")
-        elif wrong_verbs:
-            st.info(f"💡 Wir üben morgen besonders: **{', '.join(set(wrong_verbs))}**")
+        # Zeige die konkreten Verben die wiederholt werden
+        wrong_verbs = list(set(ex["verb"] for ex in wrong_examples if ex["verb"]))
+        if wrong_verbs:
+            st.info(f"💡 Wir üben morgen besonders: **{', '.join(wrong_verbs)}**")
             st.caption("Diese werden automatisch in dein Spaced Repetition System aufgenommen.")
         else:
             st.info("💡 Wir wiederholen morgen die Fehler von heute.")
@@ -1321,19 +1282,27 @@ else:
 
     st.markdown("---")
 
-    # Auto-save Bestätigung
-    st.success("✅ Session automatisch gespeichert + Lernfortschritt aktualisiert!")
+    # Buttons
+    col1, col2 = st.columns(2)
 
-    if st.button("🔄 Neue Session starten", type="primary", use_container_width=True):
-        st.session_state.exercise_num = 0
-        st.session_state.current_exercise = None
-        st.session_state.results = []
-        st.session_state.streak = 0
-        st.session_state.best_streak = 0
-        st.session_state.show_feedback = False
-        st.session_state.session_started = False
-        st.session_state.session_saved = False
-        st.rerun()
+    with col1:
+        if st.button("💾 Session speichern", type="secondary", use_container_width=True):
+            filename = save_session_result(results)
+            # Lern-System Updates: Error Patterns + Spaced Repetition
+            update_error_patterns(results)
+            update_spaced_repetition(results)
+            st.success(f"✅ Session gespeichert + Lernfortschritt aktualisiert!")
+
+    with col2:
+        if st.button("🔄 Neue Session starten", type="primary", use_container_width=True):
+            st.session_state.exercise_num = 0
+            st.session_state.current_exercise = None
+            st.session_state.results = []
+            st.session_state.streak = 0
+            st.session_state.best_streak = 0
+            st.session_state.show_feedback = False
+            st.session_state.session_started = False
+            st.rerun()
 
     st.markdown("---")
     st.markdown("**Bis morgen, Aurelie! 👋💪**")
