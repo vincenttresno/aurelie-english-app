@@ -27,27 +27,35 @@ BASE_PATH = Path(__file__).parent.parent.parent / "areas" / "aurelie-english"
 @st.cache_resource
 def get_db_connection():
     """Erstellt eine persistente Datenbankverbindung."""
-    # Versuche zuerst Streamlit Secrets (für Cloud), dann Fallback auf hardcoded (für lokale Entwicklung)
+    # Credentials NUR aus Streamlit Secrets oder Environment Variables
+    # NIEMALS hardcoded!
     try:
-        db_config = st.secrets.get("database", {})
+        db_config = st.secrets["database"]
         return psycopg2.connect(
-            host=db_config.get("host", "db.liwocmdjpjetlcrwuuth.supabase.co"),
-            port=db_config.get("port", 5432),
-            database=db_config.get("database", "postgres"),
-            user=db_config.get("user", "postgres"),
-            password=db_config.get("password", "Gluesing2510!"),
+            host=db_config["host"],
+            port=db_config["port"],
+            database=db_config["database"],
+            user=db_config["user"],
+            password=db_config["password"],
             sslmode='require'
         )
-    except Exception:
-        # Fallback für lokale Entwicklung
-        return psycopg2.connect(
-            host='db.liwocmdjpjetlcrwuuth.supabase.co',
-            port=5432,
-            database='postgres',
-            user='postgres',
-            password='Gluesing2510!',
-            sslmode='require'
-        )
+    except Exception as e:
+        # Fallback: Environment Variables für lokale Entwicklung
+        import os
+        host = os.environ.get("SUPABASE_HOST")
+        password = os.environ.get("SUPABASE_PASSWORD")
+        if host and password:
+            return psycopg2.connect(
+                host=host,
+                port=5432,
+                database='postgres',
+                user='postgres',
+                password=password,
+                sslmode='require'
+            )
+        else:
+            st.error("Datenbank-Konfiguration fehlt! Setze SUPABASE_HOST und SUPABASE_PASSWORD als Umgebungsvariablen.")
+            st.stop()
 
 def db_query(query, params=None, fetch=True):
     """Führt eine Datenbankabfrage aus mit automatischer Reconnection."""
