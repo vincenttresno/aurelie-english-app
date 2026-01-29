@@ -134,11 +134,11 @@ def load_error_patterns():
         return path.read_text()
     return None
 
-def get_exercise_from_claude(client, lernstand, error_patterns, exercise_num, total, active_error_patterns=None, selected_topic=None):
+def get_exercise_from_claude(client, lernstand, error_patterns, exercise_num, total, active_error_patterns=None, selected_topic=None, due_items=None):
     """Generiert eine Übung mit Claude API.
 
     Implementiert Interleaving: Mischt verschiedene Themen statt nur ein Thema zu wiederholen.
-    Priorisiert: 1. Selected Topic, 2. Aktive Fehlermuster, 3. Zufällig
+    Priorisiert: 1. Due Items (Spaced Repetition), 2. Selected Topic, 3. Aktive Fehlermuster, 4. Zufällig
     """
 
     # Komplette, grammatikalisch korrekte Satzvorlagen
@@ -193,15 +193,22 @@ def get_exercise_from_claude(client, lernstand, error_patterns, exercise_num, to
     ]
 
     # ===== THEMA-FILTERUNG + PRIORITÄT LOGIK =====
-    # 1. Selected Topic (vom Dropdown)
-    # 2. Extra Focus (spezifisches Verb/Wort)
+    # 1. Due Items (Spaced Repetition - HÖCHSTE PRIORITÄT)
+    # 2. Selected Topic (vom Dropdown)
     # 3. Aktive Fehlermuster
     # 4. Zufällig aus allen
 
     filtered_templates = sentence_templates  # Default: alle
 
-    # HÖCHSTE PRIORITÄT: Selected Topic (vom User-Dropdown)
-    if selected_topic:
+    # HÖCHSTE PRIORITÄT: Spaced Repetition Due Items (jede 2. Übung wenn vorhanden)
+    if due_items and exercise_num % 2 == 0:
+        # Filtere auf fällige Verben
+        due_templates = [t for t in sentence_templates if t[4] in due_items]
+        if due_templates:
+            filtered_templates = due_templates
+
+    # ZWEITE PRIORITÄT: Selected Topic (vom User-Dropdown)
+    elif selected_topic:
         topic_lower = selected_topic.lower()
         if "past simple" in topic_lower or "simple past" in topic_lower:
             # Nur Past Simple Sätze (ohne have/has)
@@ -395,8 +402,92 @@ def explain_vocabulary(word):
         return None
 
     # Sicherheit: Wort auf max. 50 Zeichen begrenzen
-    word = word.strip()[:50]
+    word = word.strip()[:50].lower()
 
+    # LOKALES DICTIONARY - schnell, kostenlos, immer verfügbar
+    local_vocab = {
+        # Häufige Wörter aus den Übungen
+        "bus": "Bus. 'Take the bus' = Den Bus nehmen.",
+        "dishes": "Geschirr. 'Do the dishes' = Geschirr spülen.",
+        "homework": "Hausaufgaben. 'Do your homework' = Mach deine Hausaufgaben.",
+        "night": "Nacht. 'Last night' = Letzte Nacht.",
+        "morning": "Morgen. 'This morning' = Heute Morgen.",
+        "school": "Schule. 'Go to school' = Zur Schule gehen.",
+        "movie": "Film. 'Watch a movie' = Einen Film schauen.",
+        "letter": "Brief. 'Write a letter' = Einen Brief schreiben.",
+        "cake": "Kuchen. 'Make a cake' = Einen Kuchen backen.",
+        "dinner": "Abendessen. 'Eat dinner' = Abendessen essen.",
+        "breakfast": "Frühstück. 'Eat breakfast' = Frühstücken.",
+        "present": "Geschenk. 'A present for you' = Ein Geschenk für dich.",
+        "friend": "Freund/Freundin. 'My friend' = Mein Freund.",
+        "parents": "Eltern. 'My parents' = Meine Eltern.",
+        "house": "Haus. 'My house' = Mein Haus.",
+        "park": "Park. 'Go to the park' = In den Park gehen.",
+        "lake": "See. 'Swim in the lake' = Im See schwimmen.",
+        "beach": "Strand. 'At the beach' = Am Strand.",
+        "pool": "Pool/Schwimmbad. 'Swim in the pool' = Im Pool schwimmen.",
+        "book": "Buch. 'Read a book' = Ein Buch lesen.",
+        "car": "Auto. 'A new car' = Ein neues Auto.",
+        "tickets": "Tickets/Karten. 'Buy tickets' = Karten kaufen.",
+        "concert": "Konzert. 'Go to a concert' = Zu einem Konzert gehen.",
+        "whale": "Wal. 'See a whale' = Einen Wal sehen.",
+        "grandparents": "Großeltern. 'Visit grandparents' = Großeltern besuchen.",
+        "dog": "Hund. 'My dog' = Mein Hund.",
+        "sister": "Schwester. 'My sister' = Meine Schwester.",
+        "brother": "Bruder. 'My brother' = Mein Bruder.",
+        "mother": "Mutter. 'My mother' = Meine Mutter.",
+        "cinema": "Kino. 'Go to the cinema' = Ins Kino gehen.",
+        "supermarket": "Supermarkt. 'Go to the supermarket' = In den Supermarkt gehen.",
+        "restaurant": "Restaurant. 'Eat at a restaurant' = Im Restaurant essen.",
+        "pizza": "Pizza. 'Eat pizza' = Pizza essen.",
+        # Unregelmäßige Verben - alle drei Formen
+        "go": "Gehen. go → went → gone",
+        "went": "Ging (von 'go'). 'I went home' = Ich ging nach Hause.",
+        "gone": "Gegangen (von 'go'). 'I have gone' = Ich bin gegangen.",
+        "swim": "Schwimmen. swim → swam → swum",
+        "swam": "Schwamm (von 'swim'). 'I swam yesterday' = Ich schwamm gestern.",
+        "swum": "Geschwommen (von 'swim'). 'I have swum' = Ich bin geschwommen.",
+        "eat": "Essen. eat → ate → eaten",
+        "ate": "Aß (von 'eat'). 'I ate pizza' = Ich aß Pizza.",
+        "eaten": "Gegessen (von 'eat'). 'I have eaten' = Ich habe gegessen.",
+        "take": "Nehmen. take → took → taken",
+        "took": "Nahm (von 'take'). 'I took the bus' = Ich nahm den Bus.",
+        "taken": "Genommen (von 'take'). 'I have taken' = Ich habe genommen.",
+        "see": "Sehen. see → saw → seen",
+        "saw": "Sah (von 'see'). 'I saw a movie' = Ich sah einen Film.",
+        "seen": "Gesehen (von 'see'). 'I have seen' = Ich habe gesehen.",
+        "write": "Schreiben. write → wrote → written",
+        "wrote": "Schrieb (von 'write'). 'I wrote a letter' = Ich schrieb einen Brief.",
+        "written": "Geschrieben (von 'write'). 'I have written' = Ich habe geschrieben.",
+        "run": "Rennen/Laufen. run → ran → run",
+        "ran": "Rannte (von 'run'). 'I ran fast' = Ich rannte schnell.",
+        "buy": "Kaufen. buy → bought → bought",
+        "bought": "Kaufte (von 'buy'). 'I bought a gift' = Ich kaufte ein Geschenk.",
+        "make": "Machen. make → made → made",
+        "made": "Machte (von 'make'). 'I made a cake' = Ich machte einen Kuchen.",
+        "come": "Kommen. come → came → come",
+        "came": "Kam (von 'come'). 'I came home' = Ich kam nach Hause.",
+        "do": "Tun/Machen. do → did → done",
+        "did": "Tat/Machte (von 'do'). 'I did my homework' = Ich machte meine Hausaufgaben.",
+        "done": "Getan (von 'do'). 'I have done' = Ich habe getan/gemacht.",
+        # Zeitangaben
+        "yesterday": "Gestern. 'I went yesterday' = Ich ging gestern.",
+        "today": "Heute. 'I go today' = Ich gehe heute.",
+        "tomorrow": "Morgen. 'I will go tomorrow' = Ich werde morgen gehen.",
+        "last": "Letzter/Letzte. 'Last week' = Letzte Woche.",
+        "ago": "Vor (Zeit). 'Two days ago' = Vor zwei Tagen.",
+        "already": "Schon/Bereits. 'I have already eaten' = Ich habe schon gegessen.",
+        "yet": "Noch (in Fragen/Verneinung). 'Have you done it yet?' = Hast du es schon gemacht?",
+        "ever": "Jemals. 'Have you ever seen?' = Hast du jemals gesehen?",
+        "never": "Nie/Niemals. 'I have never been' = Ich war noch nie.",
+        "twice": "Zweimal. 'I have been there twice' = Ich war zweimal dort.",
+    }
+
+    # Zuerst im lokalen Dictionary suchen
+    if word in local_vocab:
+        return local_vocab[word]
+
+    # Fallback: API-Call für unbekannte Wörter
     prompt = f"""Was bedeutet "{word}" auf Deutsch?
 
 WICHTIG - Antworte GENAU so:
@@ -1015,6 +1106,8 @@ elif st.session_state.exercise_num <= st.session_state.total_exercises:
             error_patterns = load_error_patterns()
             # Aktive Fehlermuster für Interleaving holen
             active_patterns = get_active_error_patterns()
+            # Fällige Spaced Repetition Items holen
+            due_items = get_due_items()
             exercise = get_exercise_from_claude(
                 client,
                 lernstand,
@@ -1022,7 +1115,8 @@ elif st.session_state.exercise_num <= st.session_state.total_exercises:
                 st.session_state.exercise_num,
                 st.session_state.total_exercises,
                 active_error_patterns=active_patterns,
-                selected_topic=st.session_state.get("selected_topic")
+                selected_topic=st.session_state.get("selected_topic"),
+                due_items=due_items
             )
             st.session_state.current_exercise = exercise
             st.rerun()
@@ -1107,7 +1201,7 @@ elif st.session_state.exercise_num <= st.session_state.total_exercises:
                 if feedback_text and feedback_text.strip():
                     # Feedback in Supabase speichern
                     if save_feedback(exercise, last_user_answer, feedback_text):
-                        st.success("✅ Danke für dein Feedback! Papa kann das jetzt sehen.")
+                        st.success("✅ Danke!")
                     else:
                         st.error("Feedback konnte nicht gespeichert werden.")
                 else:
@@ -1173,6 +1267,13 @@ else:
     total = len(results)
     quote = int(correct / total * 100) if total > 0 else 0
     best_streak = st.session_state.get("best_streak", 0)
+
+    # AUTO-SAVE: Session automatisch speichern wenn noch nicht geschehen
+    if not st.session_state.get("session_saved", False) and results:
+        save_session_result(results)
+        update_error_patterns(results)
+        update_spaced_repetition(results)
+        st.session_state.session_saved = True
 
     # Motivierende Überschrift basierend auf Ergebnis
     if quote >= 90:
@@ -1282,27 +1383,20 @@ else:
 
     st.markdown("---")
 
-    # Buttons
-    col1, col2 = st.columns(2)
+    # Auto-Save Bestätigung anzeigen
+    st.success("✅ Deine Session wurde automatisch gespeichert!")
 
-    with col1:
-        if st.button("💾 Session speichern", type="secondary", use_container_width=True):
-            filename = save_session_result(results)
-            # Lern-System Updates: Error Patterns + Spaced Repetition
-            update_error_patterns(results)
-            update_spaced_repetition(results)
-            st.success(f"✅ Session gespeichert + Lernfortschritt aktualisiert!")
-
-    with col2:
-        if st.button("🔄 Neue Session starten", type="primary", use_container_width=True):
-            st.session_state.exercise_num = 0
-            st.session_state.current_exercise = None
-            st.session_state.results = []
-            st.session_state.streak = 0
-            st.session_state.best_streak = 0
-            st.session_state.show_feedback = False
-            st.session_state.session_started = False
-            st.rerun()
+    # Button für neue Session
+    if st.button("🔄 Neue Session starten", type="primary", use_container_width=True):
+        st.session_state.exercise_num = 0
+        st.session_state.session_saved = False  # Reset für nächste Session
+        st.session_state.current_exercise = None
+        st.session_state.results = []
+        st.session_state.streak = 0
+        st.session_state.best_streak = 0
+        st.session_state.show_feedback = False
+        st.session_state.session_started = False
+        st.rerun()
 
     st.markdown("---")
     st.markdown("**Bis morgen, Aurelie! 👋💪**")
