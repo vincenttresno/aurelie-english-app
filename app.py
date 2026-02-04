@@ -23,6 +23,107 @@ load_dotenv()
 # Basis-Pfad zum Aurelie-System (für lokale Dateien die noch nicht migriert sind)
 BASE_PATH = Path(__file__).parent.parent.parent / "areas" / "aurelie-english"
 
+# Content-Pfad für JSON-Dateien (exercises, vocabulary, irregular_verbs)
+CONTENT_PATH = Path(__file__).parent / "content"
+
+# --- Content Loading Functions ---
+@st.cache_data
+def load_exercises_json():
+    """Lädt alle Übungen aus exercises.json."""
+    path = CONTENT_PATH / "exercises.json"
+    if path.exists():
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return data.get("exercises", {})
+    return {}
+
+@st.cache_data
+def load_vocabulary_json():
+    """Lädt alle Vokabeln aus vocabulary.json."""
+    path = CONTENT_PATH / "vocabulary.json"
+    if path.exists():
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return data.get("vocabulary", {})  # JSON uses "vocabulary" not "units"
+    return {}
+
+@st.cache_data
+def load_irregular_verbs_json():
+    """Lädt alle unregelmäßigen Verben aus irregular_verbs.json."""
+    path = CONTENT_PATH / "irregular_verbs.json"
+    if path.exists():
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return data.get("verbs", [])
+    return []
+
+def get_all_exercises_as_templates():
+    """Konvertiert JSON-Übungen in das Template-Format für Kompatibilität.
+
+    Returns:
+        list: [(question, verb, answer, hint, topic), ...]
+    """
+    exercises_data = load_exercises_json()
+    templates = []
+
+    for topic_key, topic_data in exercises_data.items():
+        # JSON uses "items" not "exercises" for the exercise list
+        items = topic_data.get("items", [])
+        for ex in items:
+            # Format: (Satz mit Lücke, Verb-Infinitiv, richtige Antwort, Hint, Topic-Key)
+            templates.append((
+                ex.get("question", ""),
+                ex.get("verb", ""),  # May be empty for regular verbs
+                ex.get("answer", ""),
+                ex.get("hint", ""),
+                topic_key
+            ))
+
+    return templates
+
+def get_vocabulary_dict():
+    """Erstellt ein flaches Dictionary aus allen Vokabeln für die Wort-Erklärung.
+
+    Returns:
+        dict: {word: explanation, ...}
+    """
+    vocab_data = load_vocabulary_json()
+    vocab_dict = {}
+
+    for unit_key, unit_data in vocab_data.items():
+        words = unit_data.get("words", [])
+        for word in words:
+            # JSON uses "en" and "de" not "english" and "german"
+            english = word.get("en", "").lower()
+            german = word.get("de", "")
+            example = word.get("example", "")
+
+            if english:
+                if example:
+                    vocab_dict[english] = f"{german}. '{example}'"
+                else:
+                    vocab_dict[english] = german
+
+    # Füge auch Verb-Formen aus irregular_verbs hinzu
+    verbs = load_irregular_verbs_json()
+    for verb in verbs:
+        infinitive = verb.get("infinitive", "").lower()
+        past_simple = verb.get("past_simple", "").lower()
+        past_participle = verb.get("past_participle", "").lower()
+        german = verb.get("german", "")
+        memory_trick = verb.get("memory_trick", "")
+
+        forms_str = f"{infinitive} → {past_simple} → {past_participle}"
+
+        if infinitive and infinitive not in vocab_dict:
+            vocab_dict[infinitive] = f"{german}. {forms_str}"
+        if past_simple and past_simple not in vocab_dict:
+            vocab_dict[past_simple] = f"{german} (von '{infinitive}'). {forms_str}"
+        if past_participle and past_participle not in vocab_dict and past_participle != past_simple:
+            vocab_dict[past_participle] = f"{german} (von '{infinitive}'). {forms_str}"
+
+    return vocab_dict
+
 # --- Supabase Database Connection ---
 @st.cache_resource
 def get_db_connection():
@@ -149,56 +250,39 @@ def get_exercise_from_claude(client, lernstand, error_patterns, exercise_num, to
     Priorisiert: 1. Due Items (Spaced Repetition), 2. Selected Topic, 3. Aktive Fehlermuster, 4. Zufällig
     """
 
-    # Komplette, grammatikalisch korrekte Satzvorlagen
-    # Format: (Satz mit Lücke, Verb-Infinitiv, richtige Antwort, Hint, Verb-Gruppe)
-    sentence_templates = [
-        # GO - Past Simple
-        ("Yesterday, I ___ (go) to school.", "go", "went", "go → went → gone", "go"),
-        ("Last week, my parents ___ (go) to the supermarket.", "go", "went", "go → went → gone", "go"),
-        ("On Monday, she ___ (go) to the cinema.", "go", "went", "go → went → gone", "go"),
-        ("Two days ago, we ___ (go) to the park.", "go", "went", "go → went → gone", "go"),
-        ("Last summer, they ___ (go) to London.", "go", "went", "go → went → gone", "go"),
-        # GO - Present Perfect
-        ("I have ___ (go) to Paris twice.", "go", "gone", "Present Perfect: have/has + gone", "go"),
-        ("She has never ___ (go) skiing.", "go", "gone", "Present Perfect: have/has + gone", "go"),
-        # SWIM
-        ("Yesterday, my brother ___ (swim) in the lake.", "swim", "swam", "swim → swam → swum", "swim"),
-        ("Last Saturday, the children ___ (swim) at the beach.", "swim", "swam", "swim → swam → swum", "swim"),
-        ("We have ___ (swim) in this pool before.", "swim", "swum", "Present Perfect: have/has + swum", "swim"),
-        # EAT
-        ("Last night, I ___ (eat) pizza for dinner.", "eat", "ate", "eat → ate → eaten", "eat"),
-        ("Yesterday, she ___ (eat) at a restaurant.", "eat", "ate", "eat → ate → eaten", "eat"),
-        ("They have already ___ (eat) breakfast.", "eat", "eaten", "Present Perfect: have/has + eaten", "eat"),
-        # TAKE
-        ("This morning, he ___ (take) the bus to school.", "take", "took", "take → took → taken", "take"),
-        ("Last week, my friend ___ (take) my book.", "take", "took", "take → took → taken", "take"),
-        ("I have ___ (take) this class before.", "take", "taken", "Present Perfect: have/has + taken", "take"),
-        # SEE
-        ("Yesterday, we ___ (see) a great movie.", "see", "saw", "see → saw → seen", "see"),
-        ("Last month, I ___ (see) my grandparents.", "see", "saw", "see → saw → seen", "see"),
-        ("Have you ever ___ (see) a whale?", "see", "seen", "Present Perfect: have/has + seen", "see"),
-        # WRITE
-        ("Last night, she ___ (write) a letter.", "write", "wrote", "write → wrote → written", "write"),
-        ("Yesterday, I ___ (write) my homework.", "write", "wrote", "write → wrote → written", "write"),
-        ("He has ___ (write) three books.", "write", "written", "Present Perfect: have/has + written", "write"),
-        # RUN
-        ("This morning, my sister ___ (run) 5 kilometers.", "run", "ran", "run → ran → run", "run"),
-        ("Yesterday, the dog ___ (run) in the park.", "run", "ran", "run → ran → run", "run"),
-        # BUY
-        ("Last week, my parents ___ (buy) a new car.", "buy", "bought", "buy → bought → bought", "buy"),
-        ("Yesterday, I ___ (buy) a present for my friend.", "buy", "bought", "buy → bought → bought", "buy"),
-        ("She has ___ (buy) tickets for the concert.", "buy", "bought", "Present Perfect: have/has + bought", "buy"),
-        # MAKE
-        ("Last Sunday, my mother ___ (make) a cake.", "make", "made", "make → made → made", "make"),
-        ("Yesterday, we ___ (make) dinner together.", "make", "made", "make → made → made", "make"),
-        # COME
-        ("Yesterday, my friend ___ (come) to my house.", "come", "came", "come → came → come", "come"),
-        ("Last week, they ___ (come) to visit us.", "come", "came", "come → came → come", "come"),
-        # DO
-        ("Yesterday, I ___ (do) my homework.", "do", "did", "do → did → done", "do"),
-        ("Last night, she ___ (do) the dishes.", "do", "did", "do → did → done", "do"),
-        ("Have you ___ (do) your homework yet?", "do", "done", "Present Perfect: have/has + done", "do"),
-    ]
+    # Lade Übungen aus JSON-Dateien (320 Übungen in 8 Topics)
+    sentence_templates = get_all_exercises_as_templates()
+
+    # Fallback auf minimale hardcoded Templates falls JSON nicht geladen werden kann
+    if not sentence_templates:
+        sentence_templates = [
+            ("Yesterday, I ___ (go) to school.", "go", "went", "go → went → gone", "simple_past_irregular"),
+            ("I have ___ (go) to Paris twice.", "go", "gone", "Present Perfect: have/has + gone", "present_perfect"),
+        ]
+
+    # ===== TOPIC MAPPING für JSON-basierte Filterung =====
+    # WICHTIG: Reihenfolge matters! Spezifischere Matches ZUERST prüfen
+    # Verwende exact match statt substring, um Doppel-Matching zu vermeiden
+    topic_to_json_keys_exact = {
+        # Exact matches from dropdown (case-insensitive)
+        "simple past regular": ["simple_past_regular"],
+        "simple past irregular": ["simple_past_irregular"],
+        "present perfect": ["present_perfect"],
+        "past vs perfect": ["past_vs_perfect"],
+        "going-to future": ["going_to_future"],
+        "will future": ["will_future"],
+        "comparison": ["comparison_adjectives"],
+        "adverbs": ["adverbs"],
+    }
+    # Fallback substring matches (nur wenn kein exact match)
+    topic_to_json_keys_fallback = {
+        "past simple": ["simple_past_regular", "simple_past_irregular"],
+        "simple past": ["simple_past_regular", "simple_past_irregular"],
+        "going to future": ["going_to_future"],
+        "adjectives": ["comparison_adjectives"],
+        "irregular verbs": ["simple_past_irregular", "present_perfect"],
+        "irregular": ["simple_past_irregular", "present_perfect"],
+    }
 
     # ===== THEMA-FILTERUNG + PRIORITÄT LOGIK =====
     # 1. Due Items (Spaced Repetition - HÖCHSTE PRIORITÄT)
@@ -210,23 +294,34 @@ def get_exercise_from_claude(client, lernstand, error_patterns, exercise_num, to
 
     # HÖCHSTE PRIORITÄT: Spaced Repetition Due Items (jede 2. Übung wenn vorhanden)
     if due_items and exercise_num % 2 == 0:
-        # Filtere auf fällige Verben
-        due_templates = [t for t in sentence_templates if t[4] in due_items]
+        # Filtere auf fällige Verben (check verb field)
+        due_templates = [t for t in sentence_templates if t[1] in due_items]
         if due_templates:
             filtered_templates = due_templates
 
     # ZWEITE PRIORITÄT: Selected Topic (vom User-Dropdown)
     elif selected_topic:
         topic_lower = selected_topic.lower()
-        if "past simple" in topic_lower or "simple past" in topic_lower:
-            # Nur Past Simple Sätze (ohne have/has)
-            filtered_templates = [t for t in sentence_templates if "have" not in t[0].lower() and "has" not in t[0].lower()]
-        elif "present perfect" in topic_lower:
-            # Nur Present Perfect Sätze (mit have/has)
-            filtered_templates = [t for t in sentence_templates if "have" in t[0].lower() or "has" in t[0].lower()]
-        elif "irregular" in topic_lower:
-            # Alle Templates sind irregular verbs, also alle behalten
-            pass
+
+        # Finde passende JSON topic keys - EXACT MATCH FIRST
+        matching_keys = []
+
+        # 1. Versuche exact match (um "simple past regular" nicht mit "simple past" zu matchen)
+        if topic_lower in topic_to_json_keys_exact:
+            matching_keys = topic_to_json_keys_exact[topic_lower]
+        else:
+            # 2. Fallback: substring match für generische Begriffe
+            for search_term, json_keys in topic_to_json_keys_fallback.items():
+                if search_term in topic_lower:
+                    matching_keys.extend(json_keys)
+                    break  # Nur ersten Match nehmen
+
+        if matching_keys:
+            # Filtere auf passende Topics (topic_key ist jetzt Index 4)
+            # Dedupliziere matching_keys
+            matching_keys = list(set(matching_keys))
+            filtered_templates = [t for t in sentence_templates if t[4] in matching_keys]
+
         # Fallback: wenn keine Templates gefunden, alle nehmen
         if not filtered_templates:
             filtered_templates = sentence_templates
@@ -239,20 +334,27 @@ def get_exercise_from_claude(client, lernstand, error_patterns, exercise_num, to
             pattern_verbs = active_error_patterns["problem_verbs"]
             if pattern_verbs:
                 # Filtere Templates auf genau diese Problem-Verben
-                filtered_templates = [t for t in sentence_templates if t[4] in pattern_verbs]
+                filtered_templates = [t for t in sentence_templates if t[1] in pattern_verbs]
                 # Fallback: wenn keine Templates gefunden, alle nehmen
                 if not filtered_templates:
                     filtered_templates = sentence_templates
 
     # Wähle eine zufällige Vorlage aus der (evtl. gefilterten) Liste
     template = random.choice(filtered_templates)
-    question, verb, correct_answer, hint, verb_group = template
+    question, verb, correct_answer, hint, topic_key = template
 
-    # Bestimme Topic basierend auf der Frage
-    if "have" in question.lower() or "has" in question.lower():
-        topic = "Present Perfect - Irregular Verbs"
-    else:
-        topic = "Past Simple - Irregular Verbs"
+    # Bestimme menschenlesbares Topic für die Anzeige
+    topic_display_names = {
+        "simple_past_regular": "Past Simple - Regular Verbs",
+        "simple_past_irregular": "Past Simple - Irregular Verbs",
+        "present_perfect": "Present Perfect",
+        "past_vs_perfect": "Past vs Perfect (Signal Words)",
+        "going_to_future": "Going-to Future",
+        "will_future": "Will Future",
+        "comparison_adjectives": "Comparison of Adjectives",
+        "adverbs": "Adverbs",
+    }
+    topic = topic_display_names.get(topic_key, topic_key.replace("_", " ").title())
 
     prompt = f"""Du bist ein freundlicher Englisch-Lehrer für Aurelie, eine 12-jährige Schülerin (6. Klasse).
 
@@ -412,84 +514,8 @@ def explain_vocabulary(word):
     # Sicherheit: Wort auf max. 50 Zeichen begrenzen
     word = word.strip()[:50].lower()
 
-    # LOKALES DICTIONARY - schnell, kostenlos, immer verfügbar
-    local_vocab = {
-        # Häufige Wörter aus den Übungen
-        "bus": "Bus. 'Take the bus' = Den Bus nehmen.",
-        "dishes": "Geschirr. 'Do the dishes' = Geschirr spülen.",
-        "homework": "Hausaufgaben. 'Do your homework' = Mach deine Hausaufgaben.",
-        "night": "Nacht. 'Last night' = Letzte Nacht.",
-        "morning": "Morgen. 'This morning' = Heute Morgen.",
-        "school": "Schule. 'Go to school' = Zur Schule gehen.",
-        "movie": "Film. 'Watch a movie' = Einen Film schauen.",
-        "letter": "Brief. 'Write a letter' = Einen Brief schreiben.",
-        "cake": "Kuchen. 'Make a cake' = Einen Kuchen backen.",
-        "dinner": "Abendessen. 'Eat dinner' = Abendessen essen.",
-        "breakfast": "Frühstück. 'Eat breakfast' = Frühstücken.",
-        "present": "Geschenk. 'A present for you' = Ein Geschenk für dich.",
-        "friend": "Freund/Freundin. 'My friend' = Mein Freund.",
-        "parents": "Eltern. 'My parents' = Meine Eltern.",
-        "house": "Haus. 'My house' = Mein Haus.",
-        "park": "Park. 'Go to the park' = In den Park gehen.",
-        "lake": "See. 'Swim in the lake' = Im See schwimmen.",
-        "beach": "Strand. 'At the beach' = Am Strand.",
-        "pool": "Pool/Schwimmbad. 'Swim in the pool' = Im Pool schwimmen.",
-        "book": "Buch. 'Read a book' = Ein Buch lesen.",
-        "car": "Auto. 'A new car' = Ein neues Auto.",
-        "tickets": "Tickets/Karten. 'Buy tickets' = Karten kaufen.",
-        "concert": "Konzert. 'Go to a concert' = Zu einem Konzert gehen.",
-        "whale": "Wal. 'See a whale' = Einen Wal sehen.",
-        "grandparents": "Großeltern. 'Visit grandparents' = Großeltern besuchen.",
-        "dog": "Hund. 'My dog' = Mein Hund.",
-        "sister": "Schwester. 'My sister' = Meine Schwester.",
-        "brother": "Bruder. 'My brother' = Mein Bruder.",
-        "mother": "Mutter. 'My mother' = Meine Mutter.",
-        "cinema": "Kino. 'Go to the cinema' = Ins Kino gehen.",
-        "supermarket": "Supermarkt. 'Go to the supermarket' = In den Supermarkt gehen.",
-        "restaurant": "Restaurant. 'Eat at a restaurant' = Im Restaurant essen.",
-        "pizza": "Pizza. 'Eat pizza' = Pizza essen.",
-        # Unregelmäßige Verben - alle drei Formen
-        "go": "Gehen. go → went → gone",
-        "went": "Ging (von 'go'). 'I went home' = Ich ging nach Hause.",
-        "gone": "Gegangen (von 'go'). 'I have gone' = Ich bin gegangen.",
-        "swim": "Schwimmen. swim → swam → swum",
-        "swam": "Schwamm (von 'swim'). 'I swam yesterday' = Ich schwamm gestern.",
-        "swum": "Geschwommen (von 'swim'). 'I have swum' = Ich bin geschwommen.",
-        "eat": "Essen. eat → ate → eaten",
-        "ate": "Aß (von 'eat'). 'I ate pizza' = Ich aß Pizza.",
-        "eaten": "Gegessen (von 'eat'). 'I have eaten' = Ich habe gegessen.",
-        "take": "Nehmen. take → took → taken",
-        "took": "Nahm (von 'take'). 'I took the bus' = Ich nahm den Bus.",
-        "taken": "Genommen (von 'take'). 'I have taken' = Ich habe genommen.",
-        "see": "Sehen. see → saw → seen",
-        "saw": "Sah (von 'see'). 'I saw a movie' = Ich sah einen Film.",
-        "seen": "Gesehen (von 'see'). 'I have seen' = Ich habe gesehen.",
-        "write": "Schreiben. write → wrote → written",
-        "wrote": "Schrieb (von 'write'). 'I wrote a letter' = Ich schrieb einen Brief.",
-        "written": "Geschrieben (von 'write'). 'I have written' = Ich habe geschrieben.",
-        "run": "Rennen/Laufen. run → ran → run",
-        "ran": "Rannte (von 'run'). 'I ran fast' = Ich rannte schnell.",
-        "buy": "Kaufen. buy → bought → bought",
-        "bought": "Kaufte (von 'buy'). 'I bought a gift' = Ich kaufte ein Geschenk.",
-        "make": "Machen. make → made → made",
-        "made": "Machte (von 'make'). 'I made a cake' = Ich machte einen Kuchen.",
-        "come": "Kommen. come → came → come",
-        "came": "Kam (von 'come'). 'I came home' = Ich kam nach Hause.",
-        "do": "Tun/Machen. do → did → done",
-        "did": "Tat/Machte (von 'do'). 'I did my homework' = Ich machte meine Hausaufgaben.",
-        "done": "Getan (von 'do'). 'I have done' = Ich habe getan/gemacht.",
-        # Zeitangaben
-        "yesterday": "Gestern. 'I went yesterday' = Ich ging gestern.",
-        "today": "Heute. 'I go today' = Ich gehe heute.",
-        "tomorrow": "Morgen. 'I will go tomorrow' = Ich werde morgen gehen.",
-        "last": "Letzter/Letzte. 'Last week' = Letzte Woche.",
-        "ago": "Vor (Zeit). 'Two days ago' = Vor zwei Tagen.",
-        "already": "Schon/Bereits. 'I have already eaten' = Ich habe schon gegessen.",
-        "yet": "Noch (in Fragen/Verneinung). 'Have you done it yet?' = Hast du es schon gemacht?",
-        "ever": "Jemals. 'Have you ever seen?' = Hast du jemals gesehen?",
-        "never": "Nie/Niemals. 'I have never been' = Ich war noch nie.",
-        "twice": "Zweimal. 'I have been there twice' = Ich war zweimal dort.",
-    }
+    # LOKALES DICTIONARY aus JSON-Dateien (480 Vokabeln + 59 Verben)
+    local_vocab = get_vocabulary_dict()
 
     # Zuerst im lokalen Dictionary suchen
     if word in local_vocab:
@@ -1014,18 +1040,17 @@ if not st.session_state.session_started:
     # Thema auswählen
     st.markdown("### 🎯 Welches Thema möchtest du üben?")
 
-    # Vordefinierte Themen
+    # Vordefinierte Themen (basierend auf JSON exercises.json - 8 Topics + Gemischt)
     topics = [
         "🎲 Gemischt (alle Themen)",
-        "📝 Simple Past (Vergangenheit)",
+        "📝 Simple Past Regular (regelmäßige Verben)",
+        "📝 Simple Past Irregular (unregelmäßige Verben)",
         "📝 Present Perfect (have/has + done)",
-        "📝 Simple Present (Gegenwart)",
-        "📝 Will-Future (Zukunft mit will)",
-        "📝 Going-to-Future (Zukunft mit going to)",
-        "🔀 Irregular Verbs (unregelmäßige Verben)",
-        "❓ Questions (Fragen bilden)",
-        "🚫 Negation (Verneinung)",
-        "📖 Vocabulary (Vokabeln)",
+        "🔀 Past vs Perfect (Signalwörter)",
+        "🚀 Going-to Future (Zukunft mit going to)",
+        "🚀 Will Future (Zukunft mit will)",
+        "📊 Comparison of Adjectives (Steigerung)",
+        "✨ Adverbs (Adverbien)",
     ]
 
     selected_topic = st.selectbox(
@@ -1041,15 +1066,14 @@ if not st.session_state.session_started:
     else:
         # Extrahiere das Thema aus dem Dropdown-Text
         topic_mapping = {
-            "Simple Past": "Past Simple",
+            "Simple Past Regular": "Simple Past Regular",
+            "Simple Past Irregular": "Simple Past Irregular",
             "Present Perfect": "Present Perfect",
-            "Simple Present": "Simple Present",
-            "Will-Future": "Will Future",
-            "Going-to-Future": "Going-to Future",
-            "Irregular Verbs": "Irregular Verbs",
-            "Questions": "Questions",
-            "Negation": "Negation",
-            "Vocabulary": "Vocabulary"
+            "Past vs Perfect": "Past vs Perfect",
+            "Going-to Future": "Going-to Future",
+            "Will Future": "Will Future",
+            "Comparison of Adjectives": "Comparison",
+            "Adverbs": "Adverbs",
         }
         for key, value in topic_mapping.items():
             if key in selected_topic:

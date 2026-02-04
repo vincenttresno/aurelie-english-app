@@ -1,0 +1,541 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "source": "Green Line 2 / 6. Klasse Gymnasium",
+    "total_verbs": 50,
+    "last_updated": "2026-02-04"
+  },
+  "verbs": [
+    {
+      "infinitive": "be",
+      "past_simple": "was/were",
+      "past_participle": "been",
+      "german": "sein",
+      "memory_trick": "BE ist ein Chamäleon - was/were in der Vergangenheit, been bei have/has!",
+      "difficulty": 2,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "become",
+      "past_simple": "became",
+      "past_participle": "become",
+      "german": "werden",
+      "memory_trick": "beCOME - beCOME zurück am Ende! Wie ein Bumerang.",
+      "difficulty": 3,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "begin",
+      "past_simple": "began",
+      "past_participle": "begun",
+      "german": "beginnen/anfangen",
+      "memory_trick": "begIn-begAn-begUn: I-A-U wie bei swim! Die Vokale tanzen.",
+      "difficulty": 3,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "break",
+      "past_simple": "broke",
+      "past_participle": "broken",
+      "german": "brechen/kaputtmachen",
+      "memory_trick": "BROKE klingt wie 'kaputt' - wenn was bricht, ist man oft auch broke (pleite)!",
+      "difficulty": 3,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "bring",
+      "past_simple": "brought",
+      "past_participle": "brought",
+      "german": "bringen",
+      "memory_trick": "BRING-BROUGHT reimt sich auf THINK-THOUGHT. Gleiche Endung!",
+      "difficulty": 3,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "build",
+      "past_simple": "built",
+      "past_participle": "built",
+      "german": "bauen",
+      "memory_trick": "BUILT klingt fast wie 'gebaut' - nur kürzer!",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "buy",
+      "past_simple": "bought",
+      "past_participle": "bought",
+      "german": "kaufen",
+      "memory_trick": "BUY-BOUGHT: Das U wird zu OUGH. BOUGHT reimt sich auf THOUGHT!",
+      "difficulty": 3,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "catch",
+      "past_simple": "caught",
+      "past_participle": "caught",
+      "german": "fangen",
+      "memory_trick": "CATCH-CAUGHT: Wie TEACH-TAUGHT! Die -AUGHT Endung für beide.",
+      "difficulty": 3,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "choose",
+      "past_simple": "chose",
+      "past_participle": "chosen",
+      "german": "wählen/aussuchen",
+      "memory_trick": "CHOOSE verliert ein O: CHOSE. Bei have/has kommt -N dazu: CHOSEN.",
+      "difficulty": 3,
+      "frequency": "medium"
+    },
+    {
+      "infinitive": "come",
+      "past_simple": "came",
+      "past_participle": "come",
+      "german": "kommen",
+      "memory_trick": "COME-CAME-COME: Am Ende wieder COME! Wie ein Heimkehrer.",
+      "difficulty": 2,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "cut",
+      "past_simple": "cut",
+      "past_participle": "cut",
+      "german": "schneiden",
+      "memory_trick": "CUT bleibt CUT - immer gleich! Wie PUT und SHUT.",
+      "difficulty": 1,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "do",
+      "past_simple": "did",
+      "past_participle": "done",
+      "german": "tun/machen",
+      "memory_trick": "DO-DID-DONE: Kurz und knackig! DID für gestern, DONE für 'erledigt'.",
+      "difficulty": 2,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "draw",
+      "past_simple": "drew",
+      "past_participle": "drawn",
+      "german": "zeichnen/ziehen",
+      "memory_trick": "DRAW-DREW-DRAWN: Wie KNOW-KNEW-KNOWN! Gleiche Muster.",
+      "difficulty": 3,
+      "frequency": "medium"
+    },
+    {
+      "infinitive": "drink",
+      "past_simple": "drank",
+      "past_participle": "drunk",
+      "german": "trinken",
+      "memory_trick": "drInk-drAnk-drUnk: I-A-U! Wie SWIM und SING.",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "drive",
+      "past_simple": "drove",
+      "past_participle": "driven",
+      "german": "fahren/Auto fahren",
+      "memory_trick": "DRIVE-DROVE-DRIVEN: Das I wird zu O wird zu I+EN. Wie WRITE!",
+      "difficulty": 3,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "eat",
+      "past_simple": "ate",
+      "past_participle": "eaten",
+      "german": "essen",
+      "memory_trick": "ATE spricht man wie die Zahl 8! 'I ATE 8 cookies!'",
+      "difficulty": 2,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "fall",
+      "past_simple": "fell",
+      "past_participle": "fallen",
+      "german": "fallen",
+      "memory_trick": "FALL-FELL-FALLEN: Fast wie Deutsch! Nur das A wird zu E.",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "feel",
+      "past_simple": "felt",
+      "past_participle": "felt",
+      "german": "fühlen",
+      "memory_trick": "FEEL-FELT: EE wird zu E. Kurz und einfach!",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "find",
+      "past_simple": "found",
+      "past_participle": "found",
+      "german": "finden",
+      "memory_trick": "FIND-FOUND: Das I wird zu OU. FOUND klingt wie 'Pfund' - du findest einen Schatz!",
+      "difficulty": 2,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "fly",
+      "past_simple": "flew",
+      "past_participle": "flown",
+      "german": "fliegen",
+      "memory_trick": "FLY-FLEW-FLOWN: Wie KNOW! Das Y wird zu EW wird zu OWN.",
+      "difficulty": 3,
+      "frequency": "medium"
+    },
+    {
+      "infinitive": "forget",
+      "past_simple": "forgot",
+      "past_participle": "forgotten",
+      "german": "vergessen",
+      "memory_trick": "FORGET-FORGOT-FORGOTTEN: Das E wird zu O. Doppel-T bei forgotten!",
+      "difficulty": 3,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "get",
+      "past_simple": "got",
+      "past_participle": "got/gotten",
+      "german": "bekommen/werden",
+      "memory_trick": "GET-GOT: E wird zu O. Super einfach! (US: gotten, UK: got)",
+      "difficulty": 2,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "give",
+      "past_simple": "gave",
+      "past_participle": "given",
+      "german": "geben",
+      "memory_trick": "GIVE-GAVE-GIVEN: I wird zu A. Bei have/has: GIVEN (mit N)!",
+      "difficulty": 2,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "go",
+      "past_simple": "went",
+      "past_participle": "gone",
+      "german": "gehen",
+      "memory_trick": "GO-WENT-GONE: WENT ist wie Superman - sieht komplett anders aus! GONE bei have/has.",
+      "difficulty": 2,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "grow",
+      "past_simple": "grew",
+      "past_participle": "grown",
+      "german": "wachsen",
+      "memory_trick": "GROW-GREW-GROWN: Wie KNOW und THROW! OW wird zu EW wird zu OWN.",
+      "difficulty": 3,
+      "frequency": "medium"
+    },
+    {
+      "infinitive": "have",
+      "past_simple": "had",
+      "past_participle": "had",
+      "german": "haben",
+      "memory_trick": "HAVE-HAD-HAD: Einmal HAD lernen, zweimal benutzen!",
+      "difficulty": 1,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "hear",
+      "past_simple": "heard",
+      "past_participle": "heard",
+      "german": "hören",
+      "memory_trick": "HEAR-HEARD: EA wird zu EAR+D. Du HÖRST (hear) und hast GEHÖRT (heard).",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "hit",
+      "past_simple": "hit",
+      "past_participle": "hit",
+      "german": "schlagen/treffen",
+      "memory_trick": "HIT bleibt HIT - immer gleich! Wie CUT und PUT.",
+      "difficulty": 1,
+      "frequency": "medium"
+    },
+    {
+      "infinitive": "hold",
+      "past_simple": "held",
+      "past_participle": "held",
+      "german": "halten",
+      "memory_trick": "HOLD-HELD: O wird zu E. Kurz und einfach!",
+      "difficulty": 2,
+      "frequency": "medium"
+    },
+    {
+      "infinitive": "keep",
+      "past_simple": "kept",
+      "past_participle": "kept",
+      "german": "behalten",
+      "memory_trick": "KEEP-KEPT: EE wird zu E+PT. Wie SLEEP-SLEPT!",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "know",
+      "past_simple": "knew",
+      "past_participle": "known",
+      "german": "wissen/kennen",
+      "memory_trick": "KNOW-KNEW-KNOWN: Das stumme K bleibt! KNEW reimt sich auf 'new'.",
+      "difficulty": 2,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "leave",
+      "past_simple": "left",
+      "past_participle": "left",
+      "german": "verlassen/weggehen",
+      "memory_trick": "LEAVE-LEFT: EA wird zu E. LEFT ist auch 'links' - du gehst LINKS weg!",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "let",
+      "past_simple": "let",
+      "past_participle": "let",
+      "german": "lassen",
+      "memory_trick": "LET bleibt LET - immer gleich! Wie CUT und PUT.",
+      "difficulty": 1,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "lose",
+      "past_simple": "lost",
+      "past_participle": "lost",
+      "german": "verlieren",
+      "memory_trick": "LOSE-LOST: SE wird zu ST. Wenn du verlierst, bist du LOST (verloren)!",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "make",
+      "past_simple": "made",
+      "past_participle": "made",
+      "german": "machen",
+      "memory_trick": "MAKE-MADE: K fällt weg, E kommt dazu. Klingt fast gleich!",
+      "difficulty": 2,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "meet",
+      "past_simple": "met",
+      "past_participle": "met",
+      "german": "treffen/kennenlernen",
+      "memory_trick": "MEET-MET: EE wird zu E. Nice to MEET you → I MET you yesterday.",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "pay",
+      "past_simple": "paid",
+      "past_participle": "paid",
+      "german": "bezahlen",
+      "memory_trick": "PAY-PAID: Y wird zu ID. Achtung: PAID, nicht 'payed'!",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "put",
+      "past_simple": "put",
+      "past_participle": "put",
+      "german": "legen/stellen/setzen",
+      "memory_trick": "PUT bleibt PUT - immer gleich! Wie CUT und HIT.",
+      "difficulty": 1,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "read",
+      "past_simple": "read",
+      "past_participle": "read",
+      "german": "lesen",
+      "memory_trick": "READ bleibt READ - aber Aussprache ändert sich! 'riːd' → 'red' (wie die Farbe).",
+      "difficulty": 2,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "run",
+      "past_simple": "ran",
+      "past_participle": "run",
+      "german": "rennen/laufen",
+      "memory_trick": "RUN-RAN-RUN: U wird zu A, dann wieder U. Wie ein Läufer der zurückkommt!",
+      "difficulty": 2,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "say",
+      "past_simple": "said",
+      "past_participle": "said",
+      "german": "sagen",
+      "memory_trick": "SAY-SAID: Spricht man 'sed'! Achtung: geschrieben mit AI.",
+      "difficulty": 2,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "see",
+      "past_simple": "saw",
+      "past_participle": "seen",
+      "german": "sehen",
+      "memory_trick": "SEE-SAW-SEEN: SAW ist auch 'Säge'! 'Ich SAH eine Säge.'",
+      "difficulty": 2,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "send",
+      "past_simple": "sent",
+      "past_participle": "sent",
+      "german": "schicken/senden",
+      "memory_trick": "SEND-SENT: D wird zu T. Wie SPEND-SPENT!",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "sing",
+      "past_simple": "sang",
+      "past_participle": "sung",
+      "german": "singen",
+      "memory_trick": "sIng-sAng-sUng: I-A-U! Wie SWIM und DRINK.",
+      "difficulty": 2,
+      "frequency": "medium"
+    },
+    {
+      "infinitive": "sit",
+      "past_simple": "sat",
+      "past_participle": "sat",
+      "german": "sitzen",
+      "memory_trick": "SIT-SAT: I wird zu A. Einfach!",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "sleep",
+      "past_simple": "slept",
+      "past_participle": "slept",
+      "german": "schlafen",
+      "memory_trick": "SLEEP-SLEPT: EE wird zu E+PT. Wie KEEP-KEPT!",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "speak",
+      "past_simple": "spoke",
+      "past_participle": "spoken",
+      "german": "sprechen",
+      "memory_trick": "SPEAK-SPOKE-SPOKEN: EA wird zu O. Wie BREAK-BROKE-BROKEN!",
+      "difficulty": 3,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "spend",
+      "past_simple": "spent",
+      "past_participle": "spent",
+      "german": "verbringen/ausgeben",
+      "memory_trick": "SPEND-SPENT: D wird zu T. Wie SEND-SENT!",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "stand",
+      "past_simple": "stood",
+      "past_participle": "stood",
+      "german": "stehen",
+      "memory_trick": "STAND-STOOD: A wird zu OO. Wie UNDERSTAND-UNDERSTOOD!",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "swim",
+      "past_simple": "swam",
+      "past_participle": "swum",
+      "german": "schwimmen",
+      "memory_trick": "swIm-swAm-swUm: I-A-U! Wie im Alphabet!",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "take",
+      "past_simple": "took",
+      "past_participle": "taken",
+      "german": "nehmen",
+      "memory_trick": "TAKE-TOOK-TAKEN: Die zwei OO sehen aus wie große Augen! 'Oooh, genommen!'",
+      "difficulty": 2,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "teach",
+      "past_simple": "taught",
+      "past_participle": "taught",
+      "german": "lehren/unterrichten",
+      "memory_trick": "TEACH-TAUGHT: Wie CATCH-CAUGHT! Die -AUGHT Endung.",
+      "difficulty": 3,
+      "frequency": "medium"
+    },
+    {
+      "infinitive": "tell",
+      "past_simple": "told",
+      "past_participle": "told",
+      "german": "erzählen/sagen",
+      "memory_trick": "TELL-TOLD: ELL wird zu OLD. TOLD klingt wie 'alt erzählt'!",
+      "difficulty": 2,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "think",
+      "past_simple": "thought",
+      "past_participle": "thought",
+      "german": "denken",
+      "memory_trick": "THINK-THOUGHT: INK wird zu OUGHT. Wie BRING-BROUGHT!",
+      "difficulty": 3,
+      "frequency": "very_high"
+    },
+    {
+      "infinitive": "throw",
+      "past_simple": "threw",
+      "past_participle": "thrown",
+      "german": "werfen",
+      "memory_trick": "THROW-THREW-THROWN: Wie GROW und KNOW! OW wird zu EW wird zu OWN.",
+      "difficulty": 3,
+      "frequency": "medium"
+    },
+    {
+      "infinitive": "understand",
+      "past_simple": "understood",
+      "past_participle": "understood",
+      "german": "verstehen",
+      "memory_trick": "UNDERSTAND-UNDERSTOOD: A wird zu OO. Wie STAND-STOOD!",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "wear",
+      "past_simple": "wore",
+      "past_participle": "worn",
+      "german": "tragen (Kleidung)",
+      "memory_trick": "WEAR-WORE-WORN: EA wird zu O. Was ich TRAGE → Was ich TRUG.",
+      "difficulty": 3,
+      "frequency": "medium"
+    },
+    {
+      "infinitive": "win",
+      "past_simple": "won",
+      "past_participle": "won",
+      "german": "gewinnen",
+      "memory_trick": "WIN-WON: I wird zu O. WON klingt wie 'one' (eins) - du bist Nummer 1!",
+      "difficulty": 2,
+      "frequency": "high"
+    },
+    {
+      "infinitive": "write",
+      "past_simple": "wrote",
+      "past_participle": "written",
+      "german": "schreiben",
+      "memory_trick": "WRITE-WROTE-WRITTEN: Das I wird zum O - wie ein Tintenklecks auf Papier!",
+      "difficulty": 2,
+      "frequency": "very_high"
+    }
+  ]
+}
