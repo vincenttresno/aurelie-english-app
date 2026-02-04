@@ -957,14 +957,19 @@ def get_due_items():
 
 def get_user_stats():
     """Holt die User-Statistiken (Streak, XP, Level)."""
-    result = db_query("SELECT * FROM user_stats WHERE user_id = 'aurelie'")
-    if result:
-        return result[0]
-    # Fallback: Create default entry
-    db_query(
-        "INSERT INTO user_stats (user_id) VALUES ('aurelie') ON CONFLICT (user_id) DO NOTHING",
-        fetch=False
-    )
+    try:
+        result = db_query("SELECT * FROM user_stats WHERE user_id = 'aurelie'")
+        if result:
+            return result[0]
+        # Fallback: Create default entry
+        db_query(
+            "INSERT INTO user_stats (user_id) VALUES ('aurelie') ON CONFLICT (user_id) DO NOTHING",
+            fetch=False
+        )
+    except Exception as e:
+        # Table doesn't exist yet - return defaults
+        pass
+
     return {
         'current_streak': 0,
         'longest_streak': 0,
@@ -977,13 +982,16 @@ def get_user_stats():
 
 def update_daily_streak():
     """Aktualisiert den täglichen Streak basierend auf dem Übungsdatum."""
-    today = datetime.now().date()
-    yesterday = today - timedelta(days=1)
+    try:
+        today = datetime.now().date()
+        yesterday = today - timedelta(days=1)
 
-    stats = get_user_stats()
-    last_practice = stats.get('last_practice_date')
-    current_streak = stats.get('current_streak', 0)
-    longest_streak = stats.get('longest_streak', 0)
+        stats = get_user_stats()
+        last_practice = stats.get('last_practice_date')
+        current_streak = stats.get('current_streak', 0)
+        longest_streak = stats.get('longest_streak', 0)
+    except Exception:
+        return 0  # Table doesn't exist yet
 
     # Konvertiere last_practice zu date wenn nötig
     if last_practice:
@@ -1040,24 +1048,27 @@ def update_daily_streak():
 
 def award_xp(amount, xp_type, session_id=None):
     """Vergibt XP und aktualisiert das Gesamtkonto."""
-    # XP zum Log hinzufügen
-    db_query(
+    try:
+        # XP zum Log hinzufügen
+        db_query(
         """INSERT INTO xp_log (user_id, xp_amount, xp_type, source_session_id)
            VALUES ('aurelie', %s, %s, %s)""",
         (amount, xp_type, session_id),
         fetch=False
     )
 
-    # Gesamt-XP und Level aktualisieren
-    db_query(
-        """UPDATE user_stats SET
-           total_xp = total_xp + %s,
-           level = GREATEST(1, (total_xp + %s) / 500 + 1),
-           updated_at = NOW()
-           WHERE user_id = 'aurelie'""",
-        (amount, amount),
-        fetch=False
-    )
+        # Gesamt-XP und Level aktualisieren
+        db_query(
+            """UPDATE user_stats SET
+               total_xp = total_xp + %s,
+               level = GREATEST(1, (total_xp + %s) / 500 + 1),
+               updated_at = NOW()
+               WHERE user_id = 'aurelie'""",
+            (amount, amount),
+            fetch=False
+        )
+    except Exception:
+        pass  # Table doesn't exist yet
 
 
 def calculate_session_xp(results, best_streak):
@@ -1107,56 +1118,62 @@ def check_and_unlock_achievements(stats, session_results=None):
     """
     new_achievements = []
 
-    # Achievement Definitionen
-    achievement_checks = [
-        ('first_session', "🎉 Erste Schritte", "Deine erste Übungssession!", lambda s, r: True),
-        ('streak_3', "🔥 Auf Feuer!", "3 Tage in Folge geübt", lambda s, r: s.get('current_streak', 0) >= 3),
-        ('streak_7', "🔥🔥 Wochenkrieger", "7 Tage in Folge geübt", lambda s, r: s.get('current_streak', 0) >= 7),
-        ('streak_14', "🔥🔥🔥 Unaufhaltbar", "14 Tage in Folge geübt", lambda s, r: s.get('current_streak', 0) >= 14),
-        ('streak_30', "🏆 Monatsmeister", "30 Tage in Folge geübt", lambda s, r: s.get('current_streak', 0) >= 30),
-        ('xp_100', "⭐ Sammler", "100 XP verdient", lambda s, r: s.get('total_xp', 0) >= 100),
-        ('xp_500', "⭐⭐ Fleißig", "500 XP verdient", lambda s, r: s.get('total_xp', 0) >= 500),
-        ('xp_1000', "⭐⭐⭐ Superstar", "1000 XP verdient", lambda s, r: s.get('total_xp', 0) >= 1000),
-        ('level_5', "📈 Aufsteiger", "Level 5 erreicht", lambda s, r: s.get('level', 1) >= 5),
-        ('level_10', "📈📈 Profi", "Level 10 erreicht", lambda s, r: s.get('level', 1) >= 10),
-    ]
+    try:
+        # Achievement Definitionen
+        achievement_checks = [
+            ('first_session', "🎉 Erste Schritte", "Deine erste Übungssession!", lambda s, r: True),
+            ('streak_3', "🔥 Auf Feuer!", "3 Tage in Folge geübt", lambda s, r: s.get('current_streak', 0) >= 3),
+            ('streak_7', "🔥🔥 Wochenkrieger", "7 Tage in Folge geübt", lambda s, r: s.get('current_streak', 0) >= 7),
+            ('streak_14', "🔥🔥🔥 Unaufhaltbar", "14 Tage in Folge geübt", lambda s, r: s.get('current_streak', 0) >= 14),
+            ('streak_30', "🏆 Monatsmeister", "30 Tage in Folge geübt", lambda s, r: s.get('current_streak', 0) >= 30),
+            ('xp_100', "⭐ Sammler", "100 XP verdient", lambda s, r: s.get('total_xp', 0) >= 100),
+            ('xp_500', "⭐⭐ Fleißig", "500 XP verdient", lambda s, r: s.get('total_xp', 0) >= 500),
+            ('xp_1000', "⭐⭐⭐ Superstar", "1000 XP verdient", lambda s, r: s.get('total_xp', 0) >= 1000),
+            ('level_5', "📈 Aufsteiger", "Level 5 erreicht", lambda s, r: s.get('level', 1) >= 5),
+            ('level_10', "📈📈 Profi", "Level 10 erreicht", lambda s, r: s.get('level', 1) >= 10),
+        ]
 
-    # Session-basierte Achievements
-    if session_results:
-        correct = sum(1 for r in session_results if r.get('correct', False))
-        total = len(session_results)
-        accuracy = (correct / total * 100) if total > 0 else 0
+        # Session-basierte Achievements
+        if session_results:
+            correct = sum(1 for r in session_results if r.get('correct', False))
+            total = len(session_results)
+            accuracy = (correct / total * 100) if total > 0 else 0
 
-        achievement_checks.extend([
-            ('perfect_5', "💯 Mini-Perfekt", "5 von 5 richtig", lambda s, r: total >= 5 and accuracy == 100),
-            ('perfect_10', "💯💯 Perfektionist", "10 von 10 richtig", lambda s, r: total >= 10 and accuracy == 100),
-        ])
+            achievement_checks.extend([
+                ('perfect_5', "💯 Mini-Perfekt", "5 von 5 richtig", lambda s, r: total >= 5 and accuracy == 100),
+                ('perfect_10', "💯💯 Perfektionist", "10 von 10 richtig", lambda s, r: total >= 10 and accuracy == 100),
+            ])
 
-    # Prüfe jedes Achievement
-    for key, name, description, check_func in achievement_checks:
-        # Prüfe ob schon freigeschaltet
-        existing = db_query(
-            "SELECT id FROM achievements WHERE user_id = 'aurelie' AND achievement_key = %s",
-            (key,)
-        )
-
-        if not existing and check_func(stats, session_results):
-            # Freischalten!
-            db_query(
-                "INSERT INTO achievements (user_id, achievement_key) VALUES ('aurelie', %s)",
-                (key,),
-                fetch=False
+        # Prüfe jedes Achievement
+        for key, name, description, check_func in achievement_checks:
+            # Prüfe ob schon freigeschaltet
+            existing = db_query(
+                "SELECT id FROM achievements WHERE user_id = 'aurelie' AND achievement_key = %s",
+                (key,)
             )
-            new_achievements.append({'key': key, 'name': name, 'description': description})
+
+            if not existing and check_func(stats, session_results):
+                # Freischalten!
+                db_query(
+                    "INSERT INTO achievements (user_id, achievement_key) VALUES ('aurelie', %s)",
+                    (key,),
+                    fetch=False
+                )
+                new_achievements.append({'key': key, 'name': name, 'description': description})
+    except Exception:
+        pass  # Table doesn't exist yet
 
     return new_achievements
 
 
 def get_unlocked_achievements():
     """Holt alle freigeschalteten Achievements."""
-    result = db_query(
-        "SELECT achievement_key, unlocked_at FROM achievements WHERE user_id = 'aurelie' ORDER BY unlocked_at DESC"
-    )
+    try:
+        result = db_query(
+            "SELECT achievement_key, unlocked_at FROM achievements WHERE user_id = 'aurelie' ORDER BY unlocked_at DESC"
+        )
+    except Exception:
+        return []  # Table doesn't exist yet
 
     # Achievement Metadaten
     achievement_meta = {
@@ -1191,68 +1208,74 @@ def get_unlocked_achievements():
 
 def update_topic_mastery(results):
     """Aktualisiert die Meisterschaft pro Grammatik-Thema."""
-    # Gruppiere Ergebnisse nach Topic
-    topic_stats = {}
-    for r in results:
-        topic = r.get('topic', 'unknown')
-        # Konvertiere Display-Name zu Key
-        topic_key = topic.lower().replace(' ', '_').replace('-', '_').replace('(', '').replace(')', '')
+    try:
+        # Gruppiere Ergebnisse nach Topic
+        topic_stats = {}
+        for r in results:
+            topic = r.get('topic', 'unknown')
+            # Konvertiere Display-Name zu Key
+            topic_key = topic.lower().replace(' ', '_').replace('-', '_').replace('(', '').replace(')', '')
 
-        if topic_key not in topic_stats:
-            topic_stats[topic_key] = {'correct': 0, 'total': 0}
+            if topic_key not in topic_stats:
+                topic_stats[topic_key] = {'correct': 0, 'total': 0}
 
-        topic_stats[topic_key]['total'] += 1
-        if r.get('correct', False):
-            topic_stats[topic_key]['correct'] += 1
+            topic_stats[topic_key]['total'] += 1
+            if r.get('correct', False):
+                topic_stats[topic_key]['correct'] += 1
 
-    today = datetime.now().date()
+        today = datetime.now().date()
 
-    for topic_key, stats in topic_stats.items():
-        # Prüfe ob Topic existiert
-        existing = db_query(
-            "SELECT id, total_attempts, correct_attempts FROM topic_mastery WHERE user_id = 'aurelie' AND topic_key = %s",
-            (topic_key,)
-        )
+        for topic_key, stats in topic_stats.items():
+            # Prüfe ob Topic existiert
+            existing = db_query(
+                "SELECT id, total_attempts, correct_attempts FROM topic_mastery WHERE user_id = 'aurelie' AND topic_key = %s",
+                (topic_key,)
+            )
 
-        if existing:
-            new_total = existing[0]['total_attempts'] + stats['total']
-            new_correct = existing[0]['correct_attempts'] + stats['correct']
-            accuracy = (new_correct / new_total * 100) if new_total > 0 else 0
+            if existing:
+                new_total = existing[0]['total_attempts'] + stats['total']
+                new_correct = existing[0]['correct_attempts'] + stats['correct']
+                accuracy = (new_correct / new_total * 100) if new_total > 0 else 0
 
-            # Bestimme Mastery Level
-            if accuracy >= 85 and new_total >= 20:
-                mastery = 'MASTERED'
-            elif accuracy >= 70 and new_total >= 10:
-                mastery = 'PRACTICING'
+                # Bestimme Mastery Level
+                if accuracy >= 85 and new_total >= 20:
+                    mastery = 'MASTERED'
+                elif accuracy >= 70 and new_total >= 10:
+                    mastery = 'PRACTICING'
+                else:
+                    mastery = 'LEARNING'
+
+                db_query(
+                    """UPDATE topic_mastery SET
+                       total_attempts = %s, correct_attempts = %s,
+                       mastery_level = %s, last_practiced = %s, updated_at = NOW()
+                       WHERE id = %s""",
+                    (new_total, new_correct, mastery, today, existing[0]['id']),
+                    fetch=False
+                )
             else:
+                accuracy = (stats['correct'] / stats['total'] * 100) if stats['total'] > 0 else 0
                 mastery = 'LEARNING'
 
-            db_query(
-                """UPDATE topic_mastery SET
-                   total_attempts = %s, correct_attempts = %s,
-                   mastery_level = %s, last_practiced = %s, updated_at = NOW()
-                   WHERE id = %s""",
-                (new_total, new_correct, mastery, today, existing[0]['id']),
-                fetch=False
-            )
-        else:
-            accuracy = (stats['correct'] / stats['total'] * 100) if stats['total'] > 0 else 0
-            mastery = 'LEARNING'
-
-            db_query(
-                """INSERT INTO topic_mastery (user_id, topic_key, total_attempts, correct_attempts, mastery_level, last_practiced)
-                   VALUES ('aurelie', %s, %s, %s, %s, %s)""",
-                (topic_key, stats['total'], stats['correct'], mastery, today),
-                fetch=False
-            )
+                db_query(
+                    """INSERT INTO topic_mastery (user_id, topic_key, total_attempts, correct_attempts, mastery_level, last_practiced)
+                       VALUES ('aurelie', %s, %s, %s, %s, %s)""",
+                    (topic_key, stats['total'], stats['correct'], mastery, today),
+                    fetch=False
+                )
+    except Exception:
+        pass  # Table doesn't exist yet
 
 
 def get_topic_mastery():
     """Holt den Fortschritt pro Thema."""
-    result = db_query(
-        """SELECT topic_key, total_attempts, correct_attempts, mastery_level
-           FROM topic_mastery WHERE user_id = 'aurelie' ORDER BY topic_key"""
-    )
+    try:
+        result = db_query(
+            """SELECT topic_key, total_attempts, correct_attempts, mastery_level
+               FROM topic_mastery WHERE user_id = 'aurelie' ORDER BY topic_key"""
+        )
+    except Exception:
+        return []  # Table doesn't exist yet
 
     # Topic Display Names
     display_names = {
