@@ -345,10 +345,34 @@ def get_exercise_from_claude(client, lernstand, error_patterns, exercise_num, to
 
     filtered_templates = sentence_templates  # Default: alle
 
+    # due_items ist jetzt ein dict: {"verbs": [...], "topics": [...], "all": [...]}
+    due_verbs = due_items.get("verbs", []) if isinstance(due_items, dict) else due_items or []
+    due_topics = due_items.get("topics", []) if isinstance(due_items, dict) else []
+
     # HÖCHSTE PRIORITÄT: Spaced Repetition Due Items (jede 2. Übung wenn vorhanden)
-    if due_items and exercise_num % 2 == 0:
-        # Filtere auf fällige Verben (check verb field)
-        due_templates = [t for t in sentence_templates if t[1] in due_items]
+    if (due_verbs or due_topics) and exercise_num % 2 == 0:
+        due_templates = []
+
+        # 1. Filtere auf fällige Verben
+        if due_verbs:
+            due_templates.extend([t for t in sentence_templates if t[1] in due_verbs])
+
+        # 2. Filtere auf fällige Topics (topic_key ist Index 4)
+        if due_topics:
+            # Konvertiere Topic-Display-Namen zu JSON-Keys
+            topic_display_to_key = {
+                "Past Simple - Irregular Verbs": "simple_past_irregular",
+                "Past Simple - Regular Verbs": "simple_past_regular",
+                "Present Perfect": "present_perfect",
+                "Past vs Perfect (Signal Words)": "past_vs_perfect",
+                "Going-to Future": "going_to_future",
+                "Will Future": "will_future",
+                "Comparison of Adjectives": "comparison_adjectives",
+                "Adverbs": "adverbs",
+            }
+            due_topic_keys = [topic_display_to_key.get(t, t.lower().replace(" ", "_")) for t in due_topics]
+            due_templates.extend([t for t in sentence_templates if t[4] in due_topic_keys])
+
         if due_templates:
             filtered_templates = due_templates
 
@@ -958,11 +982,16 @@ def update_error_patterns(results):
             )
 
 def update_spaced_repetition(results):
-    """Aktualisiert die spaced_repetition Tabelle in Supabase."""
+    """Aktualisiert die spaced_repetition Tabelle in Supabase.
+
+    Trackt ZWEI Dinge:
+    1. Verben (aus der Klammer) - für irreguläre Verben
+    2. Topics (Will Future, Comparison, etc.) - für Grammatik-Themen
+    """
     # SM-2 Intervalle: 1 → 3 → 7 → 14 → 30 → 60 Tage
     intervals = [1, 3, 7, 14, 30, 60]
 
-    # Sammle Verben die geübt wurden
+    # === 1. VERBEN TRACKEN (wie bisher) ===
     practiced_verbs = {}
     for r in results:
         verb_match = re.search(r'\((\w+)\)', r["question"])
@@ -976,43 +1005,67 @@ def update_spaced_repetition(results):
                 practiced_verbs[verb]["wrong"] += 1
 
     for verb, stats in practiced_verbs.items():
-        # Prüfen ob Verb schon existiert
-        existing = db_query(
-            "SELECT id, interval_days FROM spaced_repetition WHERE item = %s",
-            (verb,)
-        )
+        _update_sr_item(verb, "Irregular Verbs", stats, intervals)
 
-        if existing:
-            current_interval = existing[0]['interval_days']
+    # === 2. TOPICS TRACKEN (NEU!) ===
+    # Gruppiere Ergebnisse nach Topic
+    practiced_topics = {}
+    for r in results:
+        topic = r.get("topic", "unknown")
+        # Normalisiere Topic-Namen für konsistentes Tracking
+        topic_key = f"topic:{topic}"  # Prefix um Verben/Topics zu unterscheiden
 
-            # Bestimme nächstes Intervall
-            if stats["correct"] > stats["wrong"]:
-                try:
-                    current_index = intervals.index(current_interval)
-                    next_interval = intervals[min(current_index + 1, len(intervals) - 1)]
-                except ValueError:
-                    next_interval = next((i for i in intervals if i > current_interval), 60)
-                status = "mastered" if next_interval >= 60 else "active"
-            else:
-                next_interval = 1
-                status = "active"
-
-            next_date = datetime.now().date() + timedelta(days=next_interval)
-
-            db_query(
-                "UPDATE spaced_repetition SET interval_days = %s, next_review = %s, status = %s WHERE id = %s",
-                (next_interval, next_date, status, existing[0]['id']),
-                fetch=False
-            )
+        if topic_key not in practiced_topics:
+            practiced_topics[topic_key] = {"correct": 0, "wrong": 0, "display_name": topic}
+        if r["correct"]:
+            practiced_topics[topic_key]["correct"] += 1
         else:
-            # Neues Item einfügen
-            next_date = datetime.now().date() + timedelta(days=1)
-            db_query(
-                """INSERT INTO spaced_repetition (item, topic, interval_days, next_review, status)
-                   VALUES (%s, 'Irregular Verbs', 1, %s, 'active')""",
-                (verb, next_date),
-                fetch=False
-            )
+            practiced_topics[topic_key]["wrong"] += 1
+
+    # NUR Topics mit Fehlern ins SR aufnehmen (nicht alle)
+    for topic_key, stats in practiced_topics.items():
+        if stats["wrong"] > 0:  # Nur wenn Fehler gemacht wurden
+            _update_sr_item(topic_key, stats["display_name"], stats, intervals)
+
+
+def _update_sr_item(item, topic, stats, intervals):
+    """Hilfsfunktion: Aktualisiert ein einzelnes SR-Item."""
+    existing = db_query(
+        "SELECT id, interval_days FROM spaced_repetition WHERE item = %s",
+        (item,)
+    )
+
+    if existing:
+        current_interval = existing[0]['interval_days']
+
+        # Bestimme nächstes Intervall
+        if stats["correct"] > stats["wrong"]:
+            try:
+                current_index = intervals.index(current_interval)
+                next_interval = intervals[min(current_index + 1, len(intervals) - 1)]
+            except ValueError:
+                next_interval = next((i for i in intervals if i > current_interval), 60)
+            status = "mastered" if next_interval >= 60 else "active"
+        else:
+            next_interval = 1
+            status = "active"
+
+        next_date = datetime.now().date() + timedelta(days=next_interval)
+
+        db_query(
+            "UPDATE spaced_repetition SET interval_days = %s, next_review = %s, status = %s WHERE id = %s",
+            (next_interval, next_date, status, existing[0]['id']),
+            fetch=False
+        )
+    else:
+        # Neues Item einfügen
+        next_date = datetime.now().date() + timedelta(days=1)
+        db_query(
+            """INSERT INTO spaced_repetition (item, topic, interval_days, next_review, status)
+               VALUES (%s, %s, 1, %s, 'active')""",
+            (item, topic, next_date),
+            fetch=False
+        )
 
 def get_active_error_patterns():
     """Holt aktive Fehlermuster aus Supabase für gezielte Übungen.
@@ -1034,20 +1087,44 @@ def get_active_error_patterns():
         return {"pattern_names": [], "problem_verbs": []}
 
 def get_due_items():
-    """Holt heute fällige Spaced Repetition Items aus Supabase."""
+    """Holt heute fällige Spaced Repetition Items aus Supabase.
+
+    Returns:
+        dict: {
+            "verbs": ["eat", "swim", ...],  # Für Verb-Filterung
+            "topics": ["Will Future", ...],  # Für Topic-Filterung
+            "all": ["eat", "topic:Will Future", ...]  # Für Anzeige
+        }
+    """
     try:
         today = datetime.now().date()
         result = db_query(
-            "SELECT item FROM spaced_repetition WHERE status = 'active' AND next_review <= %s",
+            "SELECT item, topic FROM spaced_repetition WHERE status = 'active' AND next_review <= %s",
             (today,)
         )
 
         if not result:
-            return []
+            return {"verbs": [], "topics": [], "all": []}
 
-        return [r['item'] for r in result]
+        verbs = []
+        topics = []
+        all_items = []
+
+        for r in result:
+            item = r['item']
+            all_items.append(item)
+
+            if item.startswith("topic:"):
+                # Topic-Item: extrahiere den Topic-Namen
+                topic_name = item.replace("topic:", "")
+                topics.append(topic_name)
+            else:
+                # Verb-Item
+                verbs.append(item)
+
+        return {"verbs": verbs, "topics": topics, "all": all_items}
     except Exception:
-        return []
+        return {"verbs": [], "topics": [], "all": []}
 
 
 # --- Engagement System Functions ---
@@ -1560,9 +1637,14 @@ if not st.session_state.session_started:
     due_items = get_due_items()
 
     # Spaced Repetition: Fällige Items anzeigen
-    if due_items:
+    if due_items.get("verbs") or due_items.get("topics"):
         st.markdown("---")
-        st.warning(f"📅 **Heute zur Wiederholung fällig**: {', '.join(due_items)}")
+        due_display = []
+        if due_items.get("verbs"):
+            due_display.append(f"Verben: {', '.join(due_items['verbs'])}")
+        if due_items.get("topics"):
+            due_display.append(f"Themen: {', '.join(due_items['topics'])}")
+        st.warning(f"📅 **Heute zur Wiederholung fällig**: {' | '.join(due_display)}")
 
     # Aktive Fehlermuster anzeigen
     if active_patterns and active_patterns.get("pattern_names"):
