@@ -125,13 +125,22 @@ def get_vocabulary_dict():
     return vocab_dict
 
 # --- Supabase Database Connection ---
-# Flag um zu tracken ob DB verfügbar ist
-_db_available = None
+# Flag um zu tracken ob DB verfügbar ist (session-state für thread safety)
+def is_db_available():
+    """Prüft ob Datenbank verfügbar ist."""
+    return st.session_state.get('_db_available', False)
+
+def set_db_available(value):
+    """Setzt den DB-Status."""
+    st.session_state['_db_available'] = value
 
 @st.cache_resource
 def get_db_connection():
-    """Erstellt eine persistente Datenbankverbindung."""
-    global _db_available
+    """Erstellt eine persistente Datenbankverbindung.
+
+    GARANTIERT: Gibt niemals einen Fehler - entweder Connection oder None.
+    App läuft IMMER, auch ohne DB (dann ohne persistente Daten).
+    """
     # Credentials NUR aus Streamlit Secrets oder Environment Variables
     # NIEMALS hardcoded!
     try:
@@ -142,65 +151,95 @@ def get_db_connection():
             database=db_config["database"],
             user=db_config["user"],
             password=db_config["password"],
-            sslmode='require'
+            sslmode='require',
+            connect_timeout=5  # Timeout um hängende Connections zu vermeiden
         )
-        _db_available = True
         return conn
-    except Exception as e:
-        # Fallback: Environment Variables für lokale Entwicklung
-        import os
+    except Exception:
+        pass  # Streamlit secrets nicht verfügbar
+
+    # Fallback: Environment Variables für lokale Entwicklung
+    try:
         host = os.environ.get("SUPABASE_HOST")
         password = os.environ.get("SUPABASE_PASSWORD")
         if host and password:
-            try:
-                conn = psycopg2.connect(
-                    host=host,
-                    port=5432,
-                    database='postgres',
-                    user='postgres',
-                    password=password,
-                    sslmode='require'
-                )
-                _db_available = True
-                return conn
-            except Exception:
-                pass
-        # Keine DB-Verbindung möglich - App läuft trotzdem (ohne persistente Daten)
-        _db_available = False
-        return None
+            conn = psycopg2.connect(
+                host=host,
+                port=5432,
+                database='postgres',
+                user='postgres',
+                password=password,
+                sslmode='require',
+                connect_timeout=5
+            )
+            return conn
+    except Exception:
+        pass  # Env vars nicht verfügbar oder Connection fehlgeschlagen
+
+    # Keine DB-Verbindung möglich - App läuft trotzdem (ohne persistente Daten)
+    return None
 
 def db_query(query, params=None, fetch=True):
-    """Führt eine Datenbankabfrage aus mit automatischer Reconnection."""
+    """Führt eine Datenbankabfrage aus mit automatischer Reconnection.
+
+    GARANTIERT: Gibt niemals einen Fehler - entweder Ergebnis oder None.
+    Alle Exceptions werden intern abgefangen.
+    """
+    conn = None
     try:
         conn = get_db_connection()
         if conn is None:
+            set_db_available(False)
             return None  # DB nicht verfügbar
+
         # Prüfe ob Verbindung noch aktiv ist
         if conn.closed:
             st.cache_resource.clear()
             conn = get_db_connection()
             if conn is None:
+                set_db_available(False)
                 return None
 
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, params)
             if fetch:
                 result = cur.fetchall()
-                conn.commit()  # Auch bei SELECT committen um Transaction zu schließen
+                conn.commit()
+                set_db_available(True)
                 return result
             conn.commit()
+            set_db_available(True)
             return None
-    except psycopg2.OperationalError as e:
-        # Verbindung verloren - Cache leeren und neu verbinden
-        st.cache_resource.clear()
-        return None
-    except Exception as e:
+    except psycopg2.OperationalError:
+        # Verbindung verloren - Cache leeren
         try:
-            if conn:
-                conn.rollback()
-        except:
+            st.cache_resource.clear()
+        except Exception:
             pass
+        set_db_available(False)
         return None
+    except Exception:
+        # Alle anderen Fehler
+        try:
+            if conn and not conn.closed:
+                conn.rollback()
+        except Exception:
+            pass
+        set_db_available(False)
+        return None
+
+
+def safe_db_operation(func):
+    """Decorator der Datenbankfunktionen sicher macht.
+
+    Fängt ALLE Exceptions ab und gibt einen Fallback-Wert zurück.
+    """
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception:
+            return None
+    return wrapper
 
 # --- Page Config ---
 st.set_page_config(
@@ -652,26 +691,32 @@ def save_extracted_vocabulary(extraction_text):
 
 
 def save_session_result(results):
-    """Speichert die Session-Ergebnisse in Supabase."""
-    correct = sum(1 for r in results if r.get("correct", False))
-    total = len(results)
-    best_streak = st.session_state.get("best_streak", 0)
+    """Speichert die Session-Ergebnisse in Supabase.
 
-    # Details als JSON speichern
-    details = {
-        "exercises": results,
-        "timestamp": datetime.now().isoformat()
-    }
-
-    query = """
-        INSERT INTO session_results (session_date, total_exercises, correct, best_streak, details)
-        VALUES (%s, %s, %s, %s, %s)
-        RETURNING id
+    SICHER: Gibt None zurück wenn DB nicht verfügbar - App läuft weiter.
     """
-    result = db_query(query, (datetime.now().date(), total, correct, best_streak, json.dumps(details)), fetch=True)
+    try:
+        correct = sum(1 for r in results if r.get("correct", False))
+        total = len(results)
+        best_streak = st.session_state.get("best_streak", 0)
 
-    if result:
-        return f"session-{result[0]['id']}"
+        # Details als JSON speichern
+        details = {
+            "exercises": results,
+            "timestamp": datetime.now().isoformat()
+        }
+
+        query = """
+            INSERT INTO session_results (session_date, total_exercises, correct, best_streak, details)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+        """
+        result = db_query(query, (datetime.now().date(), total, correct, best_streak, json.dumps(details)), fetch=True)
+
+        if result:
+            return f"session-{result[0]['id']}"
+    except Exception:
+        pass  # DB nicht verfügbar - kein Problem
     return None
 
 
@@ -1560,10 +1605,6 @@ if not st.session_state.session_started:
     st.markdown("### Wie viele Übungen möchtest du machen?")
     num_exercises = st.slider("", 5, 15, 10, label_visibility="collapsed")
     st.session_state.total_exercises = num_exercises
-
-    # Zeit-Schätzung
-    minutes = num_exercises * 1  # ca. 1 Minute pro Übung
-    st.caption(f"⏱️ Das dauert ungefähr {minutes} Minuten")
 
     st.markdown("")  # Spacing
 
