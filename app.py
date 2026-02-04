@@ -952,6 +952,340 @@ def get_due_items():
 
     return [r['item'] for r in result]
 
+
+# --- Engagement System Functions ---
+
+def get_user_stats():
+    """Holt die User-Statistiken (Streak, XP, Level)."""
+    result = db_query("SELECT * FROM user_stats WHERE user_id = 'aurelie'")
+    if result:
+        return result[0]
+    # Fallback: Create default entry
+    db_query(
+        "INSERT INTO user_stats (user_id) VALUES ('aurelie') ON CONFLICT (user_id) DO NOTHING",
+        fetch=False
+    )
+    return {
+        'current_streak': 0,
+        'longest_streak': 0,
+        'total_xp': 0,
+        'level': 1,
+        'last_practice_date': None,
+        'streak_freeze_available': True
+    }
+
+
+def update_daily_streak():
+    """Aktualisiert den täglichen Streak basierend auf dem Übungsdatum."""
+    today = datetime.now().date()
+    yesterday = today - timedelta(days=1)
+
+    stats = get_user_stats()
+    last_practice = stats.get('last_practice_date')
+    current_streak = stats.get('current_streak', 0)
+    longest_streak = stats.get('longest_streak', 0)
+
+    # Konvertiere last_practice zu date wenn nötig
+    if last_practice:
+        if isinstance(last_practice, str):
+            last_practice = datetime.fromisoformat(last_practice.replace('Z', '+00:00')).date()
+        elif hasattr(last_practice, 'date'):
+            last_practice = last_practice.date() if callable(getattr(last_practice, 'date', None)) else last_practice
+
+    if last_practice == today:
+        # Schon heute geübt - nichts ändern
+        return current_streak
+    elif last_practice == yesterday:
+        # Gestern geübt - Streak fortsetzen
+        new_streak = current_streak + 1
+    elif last_practice and last_practice < yesterday:
+        # Mehr als 1 Tag Pause - Streak zurücksetzen (außer Freeze verfügbar)
+        if stats.get('streak_freeze_available', False):
+            # Streak Freeze verwenden
+            db_query(
+                """UPDATE user_stats SET
+                   streak_freeze_available = FALSE,
+                   streak_freeze_used_date = %s,
+                   last_practice_date = %s,
+                   updated_at = NOW()
+                   WHERE user_id = 'aurelie'""",
+                (yesterday, today),
+                fetch=False
+            )
+            return current_streak  # Streak bleibt erhalten
+        else:
+            new_streak = 1  # Reset auf 1 (heute ist Tag 1)
+    else:
+        # Erster Tag oder keine Daten
+        new_streak = 1
+
+    # Longest Streak aktualisieren
+    if new_streak > longest_streak:
+        longest_streak = new_streak
+
+    # Datenbank aktualisieren
+    db_query(
+        """UPDATE user_stats SET
+           current_streak = %s,
+           longest_streak = %s,
+           last_practice_date = %s,
+           updated_at = NOW()
+           WHERE user_id = 'aurelie'""",
+        (new_streak, longest_streak, today),
+        fetch=False
+    )
+
+    return new_streak
+
+
+def award_xp(amount, xp_type, session_id=None):
+    """Vergibt XP und aktualisiert das Gesamtkonto."""
+    # XP zum Log hinzufügen
+    db_query(
+        """INSERT INTO xp_log (user_id, xp_amount, xp_type, source_session_id)
+           VALUES ('aurelie', %s, %s, %s)""",
+        (amount, xp_type, session_id),
+        fetch=False
+    )
+
+    # Gesamt-XP und Level aktualisieren
+    db_query(
+        """UPDATE user_stats SET
+           total_xp = total_xp + %s,
+           level = GREATEST(1, (total_xp + %s) / 500 + 1),
+           updated_at = NOW()
+           WHERE user_id = 'aurelie'""",
+        (amount, amount),
+        fetch=False
+    )
+
+
+def calculate_session_xp(results, best_streak):
+    """Berechnet XP für eine Session.
+
+    XP System:
+    - +10 XP pro richtige Antwort
+    - +5 XP Streak-Bonus pro Antwort in Folge (ab 3)
+    - +50 XP für perfekte Session (100%)
+    - +25 XP für gute Session (≥80%)
+    """
+    total_xp = 0
+    xp_breakdown = []
+
+    correct_count = sum(1 for r in results if r.get('correct', False))
+    total_count = len(results)
+    accuracy = (correct_count / total_count * 100) if total_count > 0 else 0
+
+    # Basis-XP für richtige Antworten
+    base_xp = correct_count * 10
+    total_xp += base_xp
+    xp_breakdown.append(f"+{base_xp} XP ({correct_count} richtige Antworten)")
+
+    # Streak-Bonus (ab 3er Streak)
+    if best_streak >= 3:
+        streak_bonus = (best_streak - 2) * 5  # +5 für jeden über 2
+        total_xp += streak_bonus
+        xp_breakdown.append(f"+{streak_bonus} XP (🔥 {best_streak}er Streak)")
+
+    # Perfekte Session Bonus
+    if accuracy == 100 and total_count >= 5:
+        total_xp += 50
+        xp_breakdown.append("+50 XP (🏆 Perfekte Session!)")
+    # Gute Session Bonus
+    elif accuracy >= 80:
+        total_xp += 25
+        xp_breakdown.append("+25 XP (⭐ Gute Session)")
+
+    return total_xp, xp_breakdown
+
+
+def check_and_unlock_achievements(stats, session_results=None):
+    """Prüft und schaltet Achievements frei.
+
+    Returns:
+        list: Neu freigeschaltete Achievements
+    """
+    new_achievements = []
+
+    # Achievement Definitionen
+    achievement_checks = [
+        ('first_session', "🎉 Erste Schritte", "Deine erste Übungssession!", lambda s, r: True),
+        ('streak_3', "🔥 Auf Feuer!", "3 Tage in Folge geübt", lambda s, r: s.get('current_streak', 0) >= 3),
+        ('streak_7', "🔥🔥 Wochenkrieger", "7 Tage in Folge geübt", lambda s, r: s.get('current_streak', 0) >= 7),
+        ('streak_14', "🔥🔥🔥 Unaufhaltbar", "14 Tage in Folge geübt", lambda s, r: s.get('current_streak', 0) >= 14),
+        ('streak_30', "🏆 Monatsmeister", "30 Tage in Folge geübt", lambda s, r: s.get('current_streak', 0) >= 30),
+        ('xp_100', "⭐ Sammler", "100 XP verdient", lambda s, r: s.get('total_xp', 0) >= 100),
+        ('xp_500', "⭐⭐ Fleißig", "500 XP verdient", lambda s, r: s.get('total_xp', 0) >= 500),
+        ('xp_1000', "⭐⭐⭐ Superstar", "1000 XP verdient", lambda s, r: s.get('total_xp', 0) >= 1000),
+        ('level_5', "📈 Aufsteiger", "Level 5 erreicht", lambda s, r: s.get('level', 1) >= 5),
+        ('level_10', "📈📈 Profi", "Level 10 erreicht", lambda s, r: s.get('level', 1) >= 10),
+    ]
+
+    # Session-basierte Achievements
+    if session_results:
+        correct = sum(1 for r in session_results if r.get('correct', False))
+        total = len(session_results)
+        accuracy = (correct / total * 100) if total > 0 else 0
+
+        achievement_checks.extend([
+            ('perfect_5', "💯 Mini-Perfekt", "5 von 5 richtig", lambda s, r: total >= 5 and accuracy == 100),
+            ('perfect_10', "💯💯 Perfektionist", "10 von 10 richtig", lambda s, r: total >= 10 and accuracy == 100),
+        ])
+
+    # Prüfe jedes Achievement
+    for key, name, description, check_func in achievement_checks:
+        # Prüfe ob schon freigeschaltet
+        existing = db_query(
+            "SELECT id FROM achievements WHERE user_id = 'aurelie' AND achievement_key = %s",
+            (key,)
+        )
+
+        if not existing and check_func(stats, session_results):
+            # Freischalten!
+            db_query(
+                "INSERT INTO achievements (user_id, achievement_key) VALUES ('aurelie', %s)",
+                (key,),
+                fetch=False
+            )
+            new_achievements.append({'key': key, 'name': name, 'description': description})
+
+    return new_achievements
+
+
+def get_unlocked_achievements():
+    """Holt alle freigeschalteten Achievements."""
+    result = db_query(
+        "SELECT achievement_key, unlocked_at FROM achievements WHERE user_id = 'aurelie' ORDER BY unlocked_at DESC"
+    )
+
+    # Achievement Metadaten
+    achievement_meta = {
+        'first_session': ("🎉 Erste Schritte", "Deine erste Übungssession!"),
+        'streak_3': ("🔥 Auf Feuer!", "3 Tage in Folge geübt"),
+        'streak_7': ("🔥🔥 Wochenkrieger", "7 Tage in Folge geübt"),
+        'streak_14': ("🔥🔥🔥 Unaufhaltbar", "14 Tage in Folge geübt"),
+        'streak_30': ("🏆 Monatsmeister", "30 Tage in Folge geübt"),
+        'xp_100': ("⭐ Sammler", "100 XP verdient"),
+        'xp_500': ("⭐⭐ Fleißig", "500 XP verdient"),
+        'xp_1000': ("⭐⭐⭐ Superstar", "1000 XP verdient"),
+        'level_5': ("📈 Aufsteiger", "Level 5 erreicht"),
+        'level_10': ("📈📈 Profi", "Level 10 erreicht"),
+        'perfect_5': ("💯 Mini-Perfekt", "5 von 5 richtig"),
+        'perfect_10': ("💯💯 Perfektionist", "10 von 10 richtig"),
+    }
+
+    achievements = []
+    if result:
+        for r in result:
+            key = r['achievement_key']
+            meta = achievement_meta.get(key, (key, ""))
+            achievements.append({
+                'key': key,
+                'name': meta[0],
+                'description': meta[1],
+                'unlocked_at': r['unlocked_at']
+            })
+
+    return achievements
+
+
+def update_topic_mastery(results):
+    """Aktualisiert die Meisterschaft pro Grammatik-Thema."""
+    # Gruppiere Ergebnisse nach Topic
+    topic_stats = {}
+    for r in results:
+        topic = r.get('topic', 'unknown')
+        # Konvertiere Display-Name zu Key
+        topic_key = topic.lower().replace(' ', '_').replace('-', '_').replace('(', '').replace(')', '')
+
+        if topic_key not in topic_stats:
+            topic_stats[topic_key] = {'correct': 0, 'total': 0}
+
+        topic_stats[topic_key]['total'] += 1
+        if r.get('correct', False):
+            topic_stats[topic_key]['correct'] += 1
+
+    today = datetime.now().date()
+
+    for topic_key, stats in topic_stats.items():
+        # Prüfe ob Topic existiert
+        existing = db_query(
+            "SELECT id, total_attempts, correct_attempts FROM topic_mastery WHERE user_id = 'aurelie' AND topic_key = %s",
+            (topic_key,)
+        )
+
+        if existing:
+            new_total = existing[0]['total_attempts'] + stats['total']
+            new_correct = existing[0]['correct_attempts'] + stats['correct']
+            accuracy = (new_correct / new_total * 100) if new_total > 0 else 0
+
+            # Bestimme Mastery Level
+            if accuracy >= 85 and new_total >= 20:
+                mastery = 'MASTERED'
+            elif accuracy >= 70 and new_total >= 10:
+                mastery = 'PRACTICING'
+            else:
+                mastery = 'LEARNING'
+
+            db_query(
+                """UPDATE topic_mastery SET
+                   total_attempts = %s, correct_attempts = %s,
+                   mastery_level = %s, last_practiced = %s, updated_at = NOW()
+                   WHERE id = %s""",
+                (new_total, new_correct, mastery, today, existing[0]['id']),
+                fetch=False
+            )
+        else:
+            accuracy = (stats['correct'] / stats['total'] * 100) if stats['total'] > 0 else 0
+            mastery = 'LEARNING'
+
+            db_query(
+                """INSERT INTO topic_mastery (user_id, topic_key, total_attempts, correct_attempts, mastery_level, last_practiced)
+                   VALUES ('aurelie', %s, %s, %s, %s, %s)""",
+                (topic_key, stats['total'], stats['correct'], mastery, today),
+                fetch=False
+            )
+
+
+def get_topic_mastery():
+    """Holt den Fortschritt pro Thema."""
+    result = db_query(
+        """SELECT topic_key, total_attempts, correct_attempts, mastery_level
+           FROM topic_mastery WHERE user_id = 'aurelie' ORDER BY topic_key"""
+    )
+
+    # Topic Display Names
+    display_names = {
+        'past_simple___regular_verbs': 'Simple Past (Regular)',
+        'past_simple___irregular_verbs': 'Simple Past (Irregular)',
+        'present_perfect': 'Present Perfect',
+        'past_vs_perfect_signal_words': 'Past vs Perfect',
+        'going_to_future': 'Going-to Future',
+        'will_future': 'Will Future',
+        'comparison_of_adjectives': 'Comparison',
+        'adverbs': 'Adverbs',
+    }
+
+    mastery_data = []
+    if result:
+        for r in result:
+            key = r['topic_key']
+            total = r['total_attempts']
+            correct = r['correct_attempts']
+            accuracy = (correct / total * 100) if total > 0 else 0
+
+            mastery_data.append({
+                'topic_key': key,
+                'display_name': display_names.get(key, key.replace('_', ' ').title()),
+                'total': total,
+                'correct': correct,
+                'accuracy': accuracy,
+                'mastery_level': r['mastery_level']
+            })
+
+    return mastery_data
+
+
 # --- Session State ---
 if "exercise_num" not in st.session_state:
     st.session_state.exercise_num = 0
@@ -995,18 +1329,111 @@ if not st.session_state.session_started:
 
     st.markdown("---")
 
-    # Lade letzte Sessions für Kontext
-    sessions_path = BASE_PATH / "sessions"
-    last_sessions = []
-    if sessions_path.exists():
-        session_files = sorted(sessions_path.glob("*.md"), reverse=True)[:3]
-        for f in session_files:
-            last_sessions.append(f.stem)
+    # === ENGAGEMENT DASHBOARD ===
+    try:
+        user_stats = get_user_stats()
+        current_streak = user_stats.get('current_streak', 0)
+        longest_streak = user_stats.get('longest_streak', 0)
+        total_xp = user_stats.get('total_xp', 0)
+        level = user_stats.get('level', 1)
+        streak_freeze = user_stats.get('streak_freeze_available', True)
 
-    # Zeige Fortschritt wenn vorhanden
-    if last_sessions:
+        # Haupt-Stats in Spalten
         st.markdown("### 📊 Dein Fortschritt")
-        st.success("💪 Du hast schon **" + str(len(list(sessions_path.glob("*.md")))) + " Sessions** gemacht! Weiter so!")
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            streak_emoji = "🔥" if current_streak > 0 else "❄️"
+            st.metric(f"{streak_emoji} Streak", f"{current_streak} Tage")
+
+        with col2:
+            st.metric("⭐ XP", f"{total_xp:,}")
+
+        with col3:
+            st.metric("📈 Level", level)
+
+        with col4:
+            st.metric("🏆 Bester", f"{longest_streak} Tage")
+
+        # Streak-Warnung oder Motivation
+        if current_streak == 0:
+            st.info("💪 Starte heute deinen Streak! Jeden Tag üben = Streak aufbauen!")
+        elif current_streak >= 7:
+            st.success(f"🎉 Wow! {current_streak} Tage in Folge! Du bist unaufhaltbar!")
+        elif current_streak >= 3:
+            st.success(f"🔥 {current_streak} Tage Streak! Mach weiter so!")
+
+        # Streak Freeze Status
+        if not streak_freeze and current_streak > 0:
+            st.caption("⚠️ Streak Freeze verbraucht - übe jeden Tag, um deinen Streak zu behalten!")
+
+        # Level Progress Bar
+        xp_for_next_level = (level) * 500  # Level 1→2 = 500, Level 2→3 = 1000, etc.
+        xp_in_current_level = total_xp - ((level - 1) * 500)
+        progress_to_next = min(1.0, xp_in_current_level / 500) if level > 0 else 0
+
+        st.caption(f"Level {level} → {level + 1}: {xp_in_current_level}/500 XP")
+        st.progress(progress_to_next)
+
+        st.markdown("---")
+
+        # Topic Mastery Overview
+        mastery_data = get_topic_mastery()
+        if mastery_data:
+            st.markdown("### 📚 Themen-Fortschritt")
+
+            # Gruppiere nach Mastery Level
+            mastered = [t for t in mastery_data if t['mastery_level'] == 'MASTERED']
+            practicing = [t for t in mastery_data if t['mastery_level'] == 'PRACTICING']
+            learning = [t for t in mastery_data if t['mastery_level'] == 'LEARNING']
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.markdown("**✅ Gemeistert**")
+                if mastered:
+                    for t in mastered:
+                        st.markdown(f"- {t['display_name']} ({t['accuracy']:.0f}%)")
+                else:
+                    st.caption("_Noch keins_")
+
+            with col2:
+                st.markdown("**📝 Am Üben**")
+                if practicing:
+                    for t in practicing:
+                        st.markdown(f"- {t['display_name']} ({t['accuracy']:.0f}%)")
+                else:
+                    st.caption("_Noch keins_")
+
+            with col3:
+                st.markdown("**🌱 Am Lernen**")
+                if learning:
+                    for t in learning:
+                        st.markdown(f"- {t['display_name']} ({t['accuracy']:.0f}%)")
+                else:
+                    st.caption("_Noch keins_")
+
+            st.markdown("---")
+
+        # Achievements (kompakt)
+        achievements = get_unlocked_achievements()
+        if achievements:
+            with st.expander(f"🏅 Achievements ({len(achievements)} freigeschaltet)"):
+                for a in achievements[:6]:  # Max 6 zeigen
+                    st.markdown(f"**{a['name']}** - {a['description']}")
+                if len(achievements) > 6:
+                    st.caption(f"... und {len(achievements) - 6} weitere")
+
+    except Exception as e:
+        # Fallback wenn Tabellen noch nicht existieren
+        st.info("📊 Engagement-System wird geladen... (Datenbank wird eingerichtet)")
+
+        # Lade letzte Sessions für Kontext (alter Code als Fallback)
+        sessions_path = BASE_PATH / "sessions"
+        if sessions_path.exists():
+            session_count = len(list(sessions_path.glob("*.md")))
+            if session_count > 0:
+                st.success(f"💪 Du hast schon **{session_count} Sessions** gemacht! Weiter so!")
 
     # Lernstand laden
     lernstand = load_lernstand()
@@ -1302,9 +1729,40 @@ else:
 
     # AUTO-SAVE: Session automatisch speichern wenn noch nicht geschehen
     if not st.session_state.get("session_saved", False) and results:
-        save_session_result(results)
+        session_id = save_session_result(results)
         update_error_patterns(results)
         update_spaced_repetition(results)
+
+        # === ENGAGEMENT SYSTEM ===
+        try:
+            # 1. Streak aktualisieren
+            new_streak = update_daily_streak()
+            st.session_state.updated_streak = new_streak
+
+            # 2. XP berechnen und vergeben
+            total_xp, xp_breakdown = calculate_session_xp(results, best_streak)
+            for xp_type in ['correct_answer', 'streak_bonus', 'perfect_session']:
+                # Vereinfacht: alles als session_xp
+                pass
+            award_xp(total_xp, 'session', session_id)
+            st.session_state.earned_xp = total_xp
+            st.session_state.xp_breakdown = xp_breakdown
+
+            # 3. Topic Mastery aktualisieren
+            update_topic_mastery(results)
+
+            # 4. Achievements prüfen
+            stats = get_user_stats()
+            new_achievements = check_and_unlock_achievements(stats, results)
+            st.session_state.new_achievements = new_achievements
+
+        except Exception as e:
+            # Engagement-System Fehler sollten Session nicht blockieren
+            print(f"Engagement-System Fehler: {e}")
+            st.session_state.earned_xp = 0
+            st.session_state.xp_breakdown = []
+            st.session_state.new_achievements = []
+
         st.session_state.session_saved = True
 
     # Motivierende Überschrift basierend auf Ergebnis
@@ -1320,6 +1778,30 @@ else:
     else:
         st.title("💪 Nicht aufgeben!")
         st.markdown("Jeder Fehler ist eine Chance zu lernen. Beim nächsten Mal klappt's besser! 🌱")
+
+    st.markdown("---")
+
+    # === XP EARNED DISPLAY ===
+    earned_xp = st.session_state.get('earned_xp', 0)
+    xp_breakdown = st.session_state.get('xp_breakdown', [])
+    new_achievements = st.session_state.get('new_achievements', [])
+    updated_streak = st.session_state.get('updated_streak', 0)
+
+    if earned_xp > 0:
+        st.markdown(f"### ⭐ +{earned_xp} XP verdient!")
+        for line in xp_breakdown:
+            st.caption(line)
+
+    # Neue Achievements anzeigen
+    if new_achievements:
+        st.markdown("---")
+        st.markdown("### 🏅 Neue Achievements freigeschaltet!")
+        for a in new_achievements:
+            st.success(f"**{a['name']}** - {a['description']}")
+
+    # Streak Update
+    if updated_streak > 1:
+        st.info(f"🔥 Dein Streak: **{updated_streak} Tage** in Folge!")
 
     st.markdown("---")
 
