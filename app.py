@@ -559,8 +559,11 @@ def check_answer(user_answer, correct_answer):
     return user == correct
 
 
-def explain_vocabulary(word):
-    """Erklärt ein englisches Wort kindgerecht auf Deutsch."""
+def explain_vocabulary(word, api_client=None):
+    """Erklärt ein englisches Wort kindgerecht auf Deutsch.
+
+    api_client wird beim Aufruf übergeben (damit es nach Initialisierung verfügbar ist).
+    """
     if not word or not word.strip():
         return None
 
@@ -574,6 +577,10 @@ def explain_vocabulary(word):
     if word in local_vocab:
         return local_vocab[word]
 
+    # Kein API client? Kann nicht weiter helfen
+    if api_client is None:
+        return None
+
     # Fallback: API-Call für unbekannte Wörter
     prompt = f"""Was bedeutet "{word}" auf Deutsch?
 
@@ -586,11 +593,12 @@ BEISPIELE wie du antworten sollst:
 - "swim" → "Schwimmen. 'I swim' = Ich schwimme. (swim-swam-swum)"
 - "dishes" → "Geschirr. 'Do the dishes' = Geschirr spülen."
 - "went" → "Ging (von 'go'). 'I went home' = Ich ging nach Hause."
+- "movie" → "Film. 'a great movie' = ein toller Film."
 
 Antworte NUR mit: Übersetzung. Beispiel."""
 
     try:
-        response = client.messages.create(
+        response = api_client.messages.create(
             model="claude-3-haiku-20240307",
             max_tokens=150,
             messages=[{"role": "user", "content": prompt}]
@@ -1426,22 +1434,18 @@ if not st.session_state.session_started:
         level = user_stats.get('level', 1)
         streak_freeze = user_stats.get('streak_freeze_available', True)
 
-        # Haupt-Stats in Spalten
+        # Haupt-Stats in 2 Spalten (vereinfacht)
         st.markdown("### 📊 Dein Fortschritt")
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2 = st.columns(2)
 
         with col1:
             streak_emoji = "🔥" if current_streak > 0 else "❄️"
-            st.metric(f"{streak_emoji} Streak", f"{current_streak} Tage", help="Tage in Folge geübt")
+            # Zeige Rekord als Delta wenn er höher als aktuell ist
+            delta_text = f"Rekord: {longest_streak}" if longest_streak > current_streak else None
+            st.metric(f"{streak_emoji} Streak", f"{current_streak} Tage", delta=delta_text, delta_color="off", help="Tage in Folge geübt - jeden Tag üben hält den Streak!")
 
         with col2:
-            st.metric("⭐ XP", f"{total_xp:,}", help="Erfahrungspunkte - sammelst du für richtige Antworten")
-
-        with col3:
-            st.metric("📈 Level", level, help="Steigt alle 500 XP")
-
-        with col4:
-            st.metric("🏆 Rekord", f"{longest_streak} Tage", help="Dein längster Streak bisher")
+            st.metric("⭐ Level", level, help="Steigt mit jeder richtigen Antwort")
 
         # Streak-Warnung oder Motivation
         if current_streak == 0:
@@ -1684,7 +1688,7 @@ elif st.session_state.exercise_num <= st.session_state.total_exercises:
         if st.button("Erklären", key=f"explain_btn_{st.session_state.exercise_num}"):
             if vocab_word and vocab_word.strip():
                 with st.spinner("Moment..."):
-                    explanation = explain_vocabulary(vocab_word.strip())
+                    explanation = explain_vocabulary(vocab_word.strip(), api_client=client)
                     if explanation:
                         st.info(f"**{vocab_word.strip()}**: {explanation}")
                     else:
