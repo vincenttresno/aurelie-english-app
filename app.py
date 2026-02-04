@@ -125,14 +125,18 @@ def get_vocabulary_dict():
     return vocab_dict
 
 # --- Supabase Database Connection ---
+# Flag um zu tracken ob DB verfügbar ist
+_db_available = None
+
 @st.cache_resource
 def get_db_connection():
     """Erstellt eine persistente Datenbankverbindung."""
+    global _db_available
     # Credentials NUR aus Streamlit Secrets oder Environment Variables
     # NIEMALS hardcoded!
     try:
         db_config = st.secrets["database"]
-        return psycopg2.connect(
+        conn = psycopg2.connect(
             host=db_config["host"],
             port=db_config["port"],
             database=db_config["database"],
@@ -140,32 +144,43 @@ def get_db_connection():
             password=db_config["password"],
             sslmode='require'
         )
+        _db_available = True
+        return conn
     except Exception as e:
         # Fallback: Environment Variables für lokale Entwicklung
         import os
         host = os.environ.get("SUPABASE_HOST")
         password = os.environ.get("SUPABASE_PASSWORD")
         if host and password:
-            return psycopg2.connect(
-                host=host,
-                port=5432,
-                database='postgres',
-                user='postgres',
-                password=password,
-                sslmode='require'
-            )
-        else:
-            st.error("Datenbank-Konfiguration fehlt! Setze SUPABASE_HOST und SUPABASE_PASSWORD als Umgebungsvariablen.")
-            st.stop()
+            try:
+                conn = psycopg2.connect(
+                    host=host,
+                    port=5432,
+                    database='postgres',
+                    user='postgres',
+                    password=password,
+                    sslmode='require'
+                )
+                _db_available = True
+                return conn
+            except Exception:
+                pass
+        # Keine DB-Verbindung möglich - App läuft trotzdem (ohne persistente Daten)
+        _db_available = False
+        return None
 
 def db_query(query, params=None, fetch=True):
     """Führt eine Datenbankabfrage aus mit automatischer Reconnection."""
     try:
         conn = get_db_connection()
+        if conn is None:
+            return None  # DB nicht verfügbar
         # Prüfe ob Verbindung noch aktiv ist
         if conn.closed:
             st.cache_resource.clear()
             conn = get_db_connection()
+            if conn is None:
+                return None
 
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, params)
@@ -178,14 +193,13 @@ def db_query(query, params=None, fetch=True):
     except psycopg2.OperationalError as e:
         # Verbindung verloren - Cache leeren und neu verbinden
         st.cache_resource.clear()
-        st.error(f"Datenbankverbindung verloren, bitte Seite neu laden: {e}")
         return None
     except Exception as e:
         try:
-            conn.rollback()
+            if conn:
+                conn.rollback()
         except:
             pass
-        st.error(f"Datenbankfehler: {e}")
         return None
 
 # --- Page Config ---
@@ -929,28 +943,34 @@ def get_active_error_patterns():
     Returns:
         dict: {"pattern_names": [...], "problem_verbs": [...]}
     """
-    result = db_query("SELECT pattern, verb FROM error_patterns WHERE status = 'AKTIV'")
+    try:
+        result = db_query("SELECT pattern, verb FROM error_patterns WHERE status = 'AKTIV'")
 
-    if not result:
+        if not result:
+            return {"pattern_names": [], "problem_verbs": []}
+
+        pattern_names = list(set(r['pattern'] for r in result))
+        problem_verbs = list(set(r['verb'] for r in result if r['verb']))
+
+        return {"pattern_names": pattern_names, "problem_verbs": problem_verbs}
+    except Exception:
         return {"pattern_names": [], "problem_verbs": []}
-
-    pattern_names = list(set(r['pattern'] for r in result))
-    problem_verbs = list(set(r['verb'] for r in result if r['verb']))
-
-    return {"pattern_names": pattern_names, "problem_verbs": problem_verbs}
 
 def get_due_items():
     """Holt heute fällige Spaced Repetition Items aus Supabase."""
-    today = datetime.now().date()
-    result = db_query(
-        "SELECT item FROM spaced_repetition WHERE status = 'active' AND next_review <= %s",
-        (today,)
-    )
+    try:
+        today = datetime.now().date()
+        result = db_query(
+            "SELECT item FROM spaced_repetition WHERE status = 'active' AND next_review <= %s",
+            (today,)
+        )
 
-    if not result:
+        if not result:
+            return []
+
+        return [r['item'] for r in result]
+    except Exception:
         return []
-
-    return [r['item'] for r in result]
 
 
 # --- Engagement System Functions ---
