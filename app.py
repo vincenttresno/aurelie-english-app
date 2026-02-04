@@ -867,19 +867,43 @@ Sie haben eigene Formen die du auswendig lernen musst.
 
 💡 **Tipp:** Lerne die drei Formen: {verb} → {correct} → ..."""
 
-    # === GRUNDFORM STATT VERGANGENHEIT ===
+    # === GRUNDFORM STATT KONJUGIERTER FORM ===
 
     verb_match = re.search(r'\((\w+)\)', question)
     verb = verb_match.group(1).lower() if verb_match else ""
 
     if user == verb and correct != verb:
-        return f"""**Warum "{user}" hier falsch ist:**
+        # Erkenne welche Zeit gefragt war anhand der richtigen Antwort
+        if correct.startswith("will "):
+            return f"""**Warum "{user}" hier falsch ist:**
 
-Du hast die **Grundform** geschrieben, aber die Frage ist in der **Vergangenheit**!
+Du hast nur die **Grundform** geschrieben, aber hier brauchen wir **Will Future**!
+
+📚 **Will Future** = **will + Grundform**
+- Für spontane Entscheidungen, Versprechen, Vorhersagen
+
+✅ Richtig: **{correct}**
+❌ Nur Grundform: {user}
+
+💡 Merke: Bei "I think", "I promise", "probably" → immer **will + Verb**!"""
+        elif "going to" in correct:
+            return f"""**Warum "{user}" hier falsch ist:**
+
+Du hast nur die **Grundform** geschrieben, aber hier brauchen wir **Going-to Future**!
+
+📚 **Going-to Future** = **am/is/are + going to + Grundform**
+- Für Pläne und erkennbare Anzeichen
+
+✅ Richtig: **{correct}**
+❌ Nur Grundform: {user}"""
+        else:
+            return f"""**Warum "{user}" hier falsch ist:**
+
+Du hast die **Grundform** geschrieben, aber die Frage braucht eine andere Zeitform!
 
 Schau auf die Zeitangaben in der Frage - sie zeigen dir welche Zeit gebraucht wird.
 
-✅ In der Vergangenheit: **{correct}**
+✅ Richtig: **{correct}**
 ❌ Grundform: {user}"""
 
     # === FALLBACK: Allgemeine Erklärung ===
