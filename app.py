@@ -1432,16 +1432,16 @@ if not st.session_state.session_started:
 
         with col1:
             streak_emoji = "🔥" if current_streak > 0 else "❄️"
-            st.metric(f"{streak_emoji} Streak", f"{current_streak} Tage")
+            st.metric(f"{streak_emoji} Streak", f"{current_streak} Tage", help="Tage in Folge geübt")
 
         with col2:
-            st.metric("⭐ XP", f"{total_xp:,}")
+            st.metric("⭐ XP", f"{total_xp:,}", help="Erfahrungspunkte - sammelst du für richtige Antworten")
 
         with col3:
-            st.metric("📈 Level", level)
+            st.metric("📈 Level", level, help="Steigt alle 500 XP")
 
         with col4:
-            st.metric("🏆 Bester", f"{longest_streak} Tage")
+            st.metric("🏆 Rekord", f"{longest_streak} Tage", help="Dein längster Streak bisher")
 
         # Streak-Warnung oder Motivation
         if current_streak == 0:
