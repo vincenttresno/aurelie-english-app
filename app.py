@@ -732,8 +732,9 @@ def save_session_result(results):
         total = len(results)
         best_streak = st.session_state.get("best_streak", 0)
 
-        # Details als JSON speichern
+        # Details als JSON speichern (mit User für Filterung)
         details = {
+            "user_id": get_current_user(),
             "exercises": results,
             "timestamp": datetime.now().isoformat()
         }
@@ -1030,9 +1031,13 @@ def update_spaced_repetition(results):
 
 def _update_sr_item(item, topic, stats, intervals):
     """Hilfsfunktion: Aktualisiert ein einzelnes SR-Item."""
+    # User-Präfix für Isolation der Daten
+    user_id = get_current_user()
+    prefixed_item = f"{user_id}:{item}" if user_id != "aurelie" else item
+
     existing = db_query(
         "SELECT id, interval_days FROM spaced_repetition WHERE item = %s",
-        (item,)
+        (prefixed_item,)
     )
 
     if existing:
@@ -1063,7 +1068,7 @@ def _update_sr_item(item, topic, stats, intervals):
         db_query(
             """INSERT INTO spaced_repetition (item, topic, interval_days, next_review, status)
                VALUES (%s, %s, 1, %s, 'active')""",
-            (item, topic, next_date),
+            (prefixed_item, topic, next_date),
             fetch=False
         )
 
@@ -1098,10 +1103,22 @@ def get_due_items():
     """
     try:
         today = datetime.now().date()
-        result = db_query(
-            "SELECT item, topic FROM spaced_repetition WHERE status = 'active' AND next_review <= %s",
-            (today,)
-        )
+        user_id = get_current_user()
+
+        # Filtere nach User-Präfix oder unpräfixierte Items (für Aurelie-Kompatibilität)
+        if user_id == "aurelie":
+            # Aurelie: alle Items ohne Präfix
+            result = db_query(
+                "SELECT item, topic FROM spaced_repetition WHERE status = 'active' AND next_review <= %s AND item NOT LIKE '%:%'",
+                (today,)
+            )
+        else:
+            # Andere User: nur Items mit ihrem Präfix
+            prefix = f"{user_id}:%"
+            result = db_query(
+                "SELECT item, topic FROM spaced_repetition WHERE status = 'active' AND next_review <= %s AND item LIKE %s",
+                (today, prefix)
+            )
 
         if not result:
             return {"verbs": [], "topics": [], "all": []}
@@ -1112,15 +1129,18 @@ def get_due_items():
 
         for r in result:
             item = r['item']
-            all_items.append(item)
+            # Entferne User-Präfix für Anzeige
+            display_item = item.split(":", 1)[-1] if ":" in item and not item.startswith("topic:") else item
 
-            if item.startswith("topic:"):
+            all_items.append(display_item)
+
+            if item.startswith("topic:") or (user_id != "aurelie" and ":topic:" in item):
                 # Topic-Item: extrahiere den Topic-Namen
-                topic_name = item.replace("topic:", "")
+                topic_name = item.replace("topic:", "").replace(f"{user_id}:topic:", "")
                 topics.append(topic_name)
             else:
                 # Verb-Item
-                verbs.append(item)
+                verbs.append(display_item)
 
         return {"verbs": verbs, "topics": topics, "all": all_items}
     except Exception:
@@ -1129,15 +1149,22 @@ def get_due_items():
 
 # --- Engagement System Functions ---
 
+def get_current_user():
+    """Gibt den aktuell ausgewählten User zurück."""
+    return st.session_state.get('current_user', 'aurelie')
+
+
 def get_user_stats():
     """Holt die User-Statistiken (Streak, XP, Level)."""
+    user_id = get_current_user()
     try:
-        result = db_query("SELECT * FROM user_stats WHERE user_id = 'aurelie'")
+        result = db_query("SELECT * FROM user_stats WHERE user_id = %s", (user_id,))
         if result:
             return result[0]
         # Fallback: Create default entry
         db_query(
-            "INSERT INTO user_stats (user_id) VALUES ('aurelie') ON CONFLICT (user_id) DO NOTHING",
+            "INSERT INTO user_stats (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING",
+            (user_id,),
             fetch=False
         )
     except Exception as e:
@@ -1190,8 +1217,8 @@ def update_daily_streak():
                    streak_freeze_used_date = %s,
                    last_practice_date = %s,
                    updated_at = NOW()
-                   WHERE user_id = 'aurelie'""",
-                (yesterday, today),
+                   WHERE user_id = %s""",
+                (yesterday, today, get_current_user()),
                 fetch=False
             )
             return current_streak  # Streak bleibt erhalten
@@ -1212,8 +1239,8 @@ def update_daily_streak():
            longest_streak = %s,
            last_practice_date = %s,
            updated_at = NOW()
-           WHERE user_id = 'aurelie'""",
-        (new_streak, longest_streak, today),
+           WHERE user_id = %s""",
+        (new_streak, longest_streak, today, get_current_user()),
         fetch=False
     )
 
@@ -1222,14 +1249,15 @@ def update_daily_streak():
 
 def award_xp(amount, xp_type, session_id=None):
     """Vergibt XP und aktualisiert das Gesamtkonto."""
+    user_id = get_current_user()
     try:
         # XP zum Log hinzufügen
         db_query(
-        """INSERT INTO xp_log (user_id, xp_amount, xp_type, source_session_id)
-           VALUES ('aurelie', %s, %s, %s)""",
-        (amount, xp_type, session_id),
-        fetch=False
-    )
+            """INSERT INTO xp_log (user_id, xp_amount, xp_type, source_session_id)
+               VALUES (%s, %s, %s, %s)""",
+            (user_id, amount, xp_type, session_id),
+            fetch=False
+        )
 
         # Gesamt-XP und Level aktualisieren
         db_query(
@@ -1237,8 +1265,8 @@ def award_xp(amount, xp_type, session_id=None):
                total_xp = total_xp + %s,
                level = GREATEST(1, (total_xp + %s) / 500 + 1),
                updated_at = NOW()
-               WHERE user_id = 'aurelie'""",
-            (amount, amount),
+               WHERE user_id = %s""",
+            (amount, amount, user_id),
             fetch=False
         )
     except Exception:
@@ -1319,18 +1347,19 @@ def check_and_unlock_achievements(stats, session_results=None):
             ])
 
         # Prüfe jedes Achievement
+        user_id = get_current_user()
         for key, name, description, check_func in achievement_checks:
             # Prüfe ob schon freigeschaltet
             existing = db_query(
-                "SELECT id FROM achievements WHERE user_id = 'aurelie' AND achievement_key = %s",
-                (key,)
+                "SELECT id FROM achievements WHERE user_id = %s AND achievement_key = %s",
+                (user_id, key)
             )
 
             if not existing and check_func(stats, session_results):
                 # Freischalten!
                 db_query(
-                    "INSERT INTO achievements (user_id, achievement_key) VALUES ('aurelie', %s)",
-                    (key,),
+                    "INSERT INTO achievements (user_id, achievement_key) VALUES (%s, %s)",
+                    (user_id, key),
                     fetch=False
                 )
                 new_achievements.append({'key': key, 'name': name, 'description': description})
@@ -1344,7 +1373,8 @@ def get_unlocked_achievements():
     """Holt alle freigeschalteten Achievements."""
     try:
         result = db_query(
-            "SELECT achievement_key, unlocked_at FROM achievements WHERE user_id = 'aurelie' ORDER BY unlocked_at DESC"
+            "SELECT achievement_key, unlocked_at FROM achievements WHERE user_id = %s ORDER BY unlocked_at DESC",
+            (get_current_user(),)
         )
     except Exception:
         return []  # Table doesn't exist yet
@@ -1399,11 +1429,12 @@ def update_topic_mastery(results):
 
         today = datetime.now().date()
 
+        user_id = get_current_user()
         for topic_key, stats in topic_stats.items():
             # Prüfe ob Topic existiert
             existing = db_query(
-                "SELECT id, total_attempts, correct_attempts FROM topic_mastery WHERE user_id = 'aurelie' AND topic_key = %s",
-                (topic_key,)
+                "SELECT id, total_attempts, correct_attempts FROM topic_mastery WHERE user_id = %s AND topic_key = %s",
+                (user_id, topic_key)
             )
 
             if existing:
@@ -1433,8 +1464,8 @@ def update_topic_mastery(results):
 
                 db_query(
                     """INSERT INTO topic_mastery (user_id, topic_key, total_attempts, correct_attempts, mastery_level, last_practiced)
-                       VALUES ('aurelie', %s, %s, %s, %s, %s)""",
-                    (topic_key, stats['total'], stats['correct'], mastery, today),
+                       VALUES (%s, %s, %s, %s, %s, %s)""",
+                    (user_id, topic_key, stats['total'], stats['correct'], mastery, today),
                     fetch=False
                 )
     except Exception:
@@ -1446,7 +1477,8 @@ def get_topic_mastery():
     try:
         result = db_query(
             """SELECT topic_key, total_attempts, correct_attempts, mastery_level
-               FROM topic_mastery WHERE user_id = 'aurelie' ORDER BY topic_key"""
+               FROM topic_mastery WHERE user_id = %s ORDER BY topic_key""",
+            (get_current_user(),)
         )
     except Exception:
         return []  # Table doesn't exist yet
@@ -1484,6 +1516,8 @@ def get_topic_mastery():
 
 
 # --- Session State ---
+if "current_user" not in st.session_state:
+    st.session_state.current_user = "aurelie"  # Default: Aurelie's echte Daten
 if "exercise_num" not in st.session_state:
     st.session_state.exercise_num = 0
 if "total_exercises" not in st.session_state:
@@ -1521,6 +1555,11 @@ client = anthropic.Anthropic(api_key=api_key)
 
 # --- Start Screen ---
 if not st.session_state.session_started:
+    # Test-Banner (nur im Test-Modus, aber gleiche UI wie Aurelie sieht)
+    if get_current_user() == "test_user":
+        st.info("🧪 **TEST ENVIRONMENT** - Daten werden separat gespeichert")
+
+    # Normale Begrüßung (identisch für Test und Produktion)
     st.markdown("## 👋 Hey Aurelie!")
     st.markdown("Schön, dass du da bist! Lass uns zusammen Englisch üben. 🎯")
 
@@ -2111,6 +2150,29 @@ else:
 
 # --- Sidebar ---
 with st.sidebar:
+    # === VERSTECKTER TEST-MODUS ===
+    # Aktiviere mit URL-Parameter: ?mode=test
+    # Aurelie sieht das nie - nur Vincent kennt den Parameter
+    query_params = st.query_params
+    is_test_mode = query_params.get("mode") == "test"
+
+    if is_test_mode:
+        # Test-Modus aktivieren wenn noch nicht gesetzt
+        if st.session_state.current_user != "test_user":
+            st.session_state.current_user = "test_user"
+            st.session_state.session_started = False
+            st.session_state.results = []
+            st.session_state.streak = 0
+            st.session_state.best_streak = 0
+            st.session_state.exercise_num = 0
+            st.session_state.current_exercise = None
+            st.cache_data.clear()
+            st.rerun()
+
+        st.warning("🧪 **TEST-MODUS**")
+        st.caption("Daten werden separat gespeichert")
+        st.markdown("---")
+
     st.markdown("### 📊 Session Info")
     st.markdown(f"**Richtig:** {sum(1 for r in st.session_state.results if r.get('correct', False))}")
     st.markdown(f"**Gesamt:** {len(st.session_state.results)}")
